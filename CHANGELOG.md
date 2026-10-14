@@ -3,12 +3,16 @@
 ## Unreleased
 
 - **`MM_CAP=1`: images above the prefill chunk were refused with HTTP 400** (#11). The
-  launcher bounded images with `max_pixels`, which the memory profiler reads but the
+  launcher bounded images with `max_pixels`, which the memory profiler read but the
   GLM-5.3 image processor ignores, so the encoder cache was sized for small images while
   real images kept their full size (a 3840×2160 image is 7,973 tokens). The launcher now
-  also passes `max_image_tokens` (`MM_MAX_IMAGE_TOKENS`, default `MM_MAX_PIXELS / 784`
-  = 1,280), which caps every image, and each whole video, at that many tokens. The
-  default `MM_CAP=0` was not affected. Thanks to @YulHeon for the diagnosis and the fix.
+  passes only `max_image_tokens` (`MM_MAX_IMAGE_TOKENS`, default `MM_MAX_PIXELS / 784`
+  = 1,280), which caps every image, and each whole video, at that many tokens. This
+  release's engine reads the same key in its profiler, so profiled and real items agree
+  and the `max_pixels` warning at startup is gone. The fix needs that engine: it does not
+  work as a launcher-only change on the 1.7.2 engine (`ab60b723ad`), whose profiler
+  ignores `max_image_tokens`. The default `MM_CAP=0` was not affected. Thanks to
+  @YulHeon for the diagnosis and the fix.
 
 ## 1.7.2 — 2026-10-06
 
