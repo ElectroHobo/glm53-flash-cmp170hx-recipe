@@ -688,12 +688,15 @@ fi
 # Multimodal: vision + video stay on. Default is UNCAPPED (the profiler reserves for a
 # context-filling video on stage 0, ~150k fewer KV tokens). Set MM_CAP=1 to bound inputs instead:
 # profiler dummy = MM_IMAGES images + 1 video of MM_FRAMES frames, and the same bound is enforced
-# on real inputs (media-io-kwargs frames, mm-processor-kwargs pixels).
+# on real inputs (media-io-kwargs frames, mm-processor-kwargs tokens). The profiler reads
+# max_pixels; the image and video processors read only max_image_tokens (one token per
+# 28x28 = 784 px of image area; for video the cap is per whole video), so both are passed.
 MM_IMAGES=${MM_IMAGES:-4}; MM_FRAMES=${MM_FRAMES:-32}; MM_MAX_PIXELS=${MM_MAX_PIXELS:-1003520}
+MM_MAX_IMAGE_TOKENS=${MM_MAX_IMAGE_TOKENS:-$(( MM_MAX_PIXELS / 784 ))}
 MM_ARGS=()
 if [ "${MM_CAP:-0}" = "1" ]; then MM_ARGS=(
   --limit-mm-per-prompt "{\"image\":$MM_IMAGES,\"video\":{\"count\":1,\"num_frames\":$MM_FRAMES,\"width\":1280,\"height\":784}}"
-  --mm-processor-kwargs "{\"max_pixels\":$MM_MAX_PIXELS}"
+  --mm-processor-kwargs "{\"max_pixels\":$MM_MAX_PIXELS,\"max_image_tokens\":$MM_MAX_IMAGE_TOKENS}"
   --media-io-kwargs "{\"video\":{\"num_frames\":$MM_FRAMES}}"
 ); fi
 

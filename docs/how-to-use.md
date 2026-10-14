@@ -131,7 +131,7 @@ Commonly used from `.env.advanced.example`:
 | `MAX_BATCHED` | `3460` (TP4), `2312` (PP4) | sets the prefill chunk: 3,456 / 2,304 tokens; `2048` gives 1,152 |
 | `FAIR_PREFILL` / `FAIR_CHUNK` | `1` / `384` | fair prefill and its slice size while others decode |
 | `PREFILL_CAP` | `0` | upstream's unconditional chunk cap. **Leave it 0**: it turns the prefill features off |
-| `MM_CAP` | `0` | `1` bounds image and video inputs, which reduces the multimodal memory reservation |
+| `MM_CAP` | `0` | `1` bounds image and video inputs, which reduces the multimodal memory reservation. Each image, and each whole video, is capped at `MM_MAX_IMAGE_TOKENS` tokens (default `MM_MAX_PIXELS / 784` = 1280) |
 | `IMAGE` | this release's image, by digest | the engine image (container) |
 | `CONTAINER_NAME` | `glm53-flash` | the container's name |
 | `READY_TIMEOUT` | `1800` | seconds `./start.sh` waits for `/health` |
