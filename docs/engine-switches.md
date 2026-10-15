@@ -69,10 +69,10 @@ so it also works before the first install.
 
 CPU regression checks live in `tools/tests`: run `python -m pytest -q tools/tests`.
 They exercise slow frontend readiness and the launcher's depth/kill-switch
-combinations. With the native fork installed, they also consume the effective
-environment through its real configuration methods without loading a model or
-initialising CUDA; those engine-contract cases are skipped before installation.
-`RECIPE_TEST_ENGINE=/path/to/fork` selects a specific installed source tree.
+combinations. With the pinned fork's source importable, they also consume the
+effective environment through its real configuration methods without loading a
+model or initialising CUDA; those engine-contract cases are skipped otherwise.
+`RECIPE_TEST_ENGINE=/path/to/fork` selects a specific source tree.
 
 ## Other engine settings
 

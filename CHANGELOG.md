@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+- **One command from a fresh clone: `./start.sh` or `docker compose up`.** Plain
+  `docker compose up` now does the whole first start: a `prepare` service
+  runs first, makes `./cache` and the model directory writable by the serving user,
+  and downloads the two checkpoints (resumed if interrupted, skipped once complete);
+  then the server starts, and `docker compose ps` shows it healthy once `/health`
+  answers. The server runs as the owner
+  of the checkout, never as root, so `HOST_UID`/`HOST_GID` and the manual `mkdir`,
+  `./install.sh` and `./download.sh` steps are no longer needed (`HOST_UID` and
+  `HOST_GID` still override the user). Docker's root-owned bind-mount directories no
+  longer break a first start. The server's launch settings (`serve.sh` and
+  `docker/container.env`) are unchanged.
+- **Docker Compose in 1.7.2 started 1.7.1's engine image** (fixes for #4, #7, #9 and
+  #10 missing); updating to this release fixes it. `docker-compose.yml` now runs the
+  image `./start.sh` pins, and a check keeps the two equal.
+- **The native runtime is gone: the engine runs only in the container.**
+  `RUNTIME=native`, the venv build in `./install.sh` and the native documentation are
+  removed. A checkout with a native install moves to the container on
+  `./start.sh update` (or `restart`): it checks Docker first and leaves the native
+  server running if Docker is not usable, otherwise stops the native server, pulls the
+  image and starts the container with your `.env` and the checkpoints you already
+  downloaded, and says what it did. It deletes nothing: `venv/` and `vllm-src/` stay
+  until you remove them. The first container start compiles its kernel caches into
+  `./cache`, so it is slower. Install Docker and the NVIDIA Container Toolkit first
+  (README → One-time host setup). In `.env`, delete `RUNTIME`, `VLLM_COMMIT` and the
+  native-only `VLLM_REPO`, `VLLM_BRANCH`, `VLLM_PRECOMPILED_WHEEL_COMMIT`, `VENV`, `VLLM_SRC`,
+  `CUDA_HOME`, `PYTHON_VERSION`, `BUILD_FROM_SOURCE`, `MAX_JOBS`,
+  `NATIVE_INSTALL_RESUME`, `FLASHINFER_INSTALL_*`, `TORCH_CUDA_ARCH_LIST`,
+  `TORCH_INDEX_URL` and `VLLM_BUILD_AMPERE_MARLIN` (the image already includes the
+  optional Marlin library). `./start.sh` warns about `RUNTIME`, `VLLM_COMMIT` and
+  `VLLM_BUILD_AMPERE_MARLIN` until they are removed; the others are ignored.
+- **Rolling back to an earlier release is no longer a supported path.**
+  `./start.sh update` moves forward only. Older releases remain as git tags; their
+  images may be retired. Delete an `IMAGE` line from `.env` to follow this release's
+  image.
+- **An interrupted checkpoint download is resumed** instead of being taken as
+  complete. A checkpoint now counts as present only with its config, every shard its
+  index names and no partial download left behind; `./start.sh` and Compose use the
+  same check.
 - **`MM_CAP=1`: images above the prefill chunk were refused with HTTP 400** (#11). The
   launcher bounded images with `max_pixels`, which the memory profiler read but the
   GLM-5.3 image processor ignores, so the encoder cache was sized for small images while

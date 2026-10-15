@@ -45,19 +45,9 @@ is rebuilt from `ab60b723ada254a442a4ba5ff27bf837aa27ef83`; decode entry points 
 The published [Results](results.md) remain the 1.7.0 measurements until
 1.7.2 validation is complete.
 
-The pinned container image includes the optional library. To build it natively,
-use `RUNTIME=native VLLM_BUILD_AMPERE_MARLIN=1 ./start.sh install`.
-Native compilation is opt-in; it is independent of runtime enablement.
-
-Normal native installs use the precompiled base engine without compiling this
-library. Opting in requires a CUDA toolkit (`CUDA_HOME`) and C++ compiler.
-`install` and `update` add the library even at an unchanged engine pin. A separate
-stamp includes source, requirements, Python/torch ABI, compiler/toolkit versions
-and binary digest; matching builds are reused. Engine reinstalls invalidate the
-optional binary, without demanding its toolkit when build is off. Failed rebuilds
-cannot leave a stale library in service. Enabling the runtime switch without the
-library fails before serving, never silently falling back. Decode off
-means no optional-extension load. Existing `.env` and explicit pin overrides are preserved.
+The pinned container image includes the optional library. Enabling the runtime
+switch without the library fails before serving, never silently falling back.
+Decode off means no optional-extension load.
 
 The [container build](../docker/README.md#build-it) prebuilds the same library with
 no visible GPUs. Marlin needs no startup compiler or layout-specific rebuild;

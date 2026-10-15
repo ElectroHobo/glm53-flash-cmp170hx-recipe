@@ -6,8 +6,8 @@
 |---|---|
 | GPUs | 4× NVIDIA CMP 170HX, **each exposing 64 GiB** (`nvidia-smi` shows 65,536 MiB). For tensor-parallel 4, **PCIe Gen2 x16 links**; pipeline-parallel 4 is built for narrower links. Stock cards expose less memory and run at x4; getting to 64 GiB and x16 is outside this repository. The preflight stops before any download if a card reports under 60 GiB, and warns below x16 ([Link width](#link-width)) |
 | OS and driver | Linux (the commands below are for Ubuntu) with NVIDIA driver **580 or newer**; `nvidia-smi` must list all four cards |
-| Container runtime | Docker with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), usable by your user, so that `docker run --rm --gpus all nvidia/cuda:13.3.1-base-ubuntu24.04 nvidia-smi` lists all four cards. Not needed for the [native install](#native-install-for-developers) |
-| Tools | `git`, `curl`, `flock` and `setsid` (util-linux, on most systems already), `jq` for the smoke test |
+| Container runtime | Docker with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html), usable by your user, so that `docker run --rm --gpus all nvidia/cuda:13.3.1-base-ubuntu24.04 nvidia-smi` lists all four cards. This and the driver are a one-time host setup; the engine and its Python environment come in the image |
+| Tools | for `./start.sh`: `git`, `curl`, `flock` and `setsid` (util-linux, on most systems already), Python 3 for the boot check, `jq` for the smoke test. Docker Compose needs only Docker |
 | Disk | about 180 GiB (193 GB) for the two checkpoints, plus the engine image and the kernel compile caches |
 
 ## Step by step
@@ -27,8 +27,10 @@ The container runs the engine image with this repository's `serve.sh` as its
 entry point, as your user rather than root, with the checkpoints mounted
 read-only and the kernel compile caches in `./cache` (owned by you). It
 publishes the API on `127.0.0.1:8000` only. Its output goes to
-`logs/serve.log`, as a native start's does, and `./start.sh stop` stops only the
-container this checkout started.
+`logs/serve.log`, and `./start.sh stop` stops only the container this checkout
+started. The download runs in the same image as you, so the checkpoints are
+yours too; an interrupted download resumes on the next run, and a checkpoint
+counts as present only when every file its index names is there.
 
 **The first boot after an install or an update is slower.** FlashInfer 0.7.0
 compiles its kernel modules into an empty cache unless a matching seed is
@@ -38,12 +40,6 @@ image show TP4 startup falling from 931 s cold to 561 s seeded, and PP4 from
 the log can show lines like
 `No available shared memory broadcast block found in 60 seconds`; they are
 harmless and stop once the build finishes.
-
-For a native install with slow or offline downloads, get the pinned
-`flashinfer-cubin==0.7.0` wheel from the
-[FlashInfer v0.7.0 GitHub release assets](https://github.com/flashinfer-ai/flashinfer/releases/tag/v0.7.0).
-That cubin version is not hosted on PyPI or the FlashInfer wheel-index pages;
-the `whl/cu130/` index lists JIT-cache packages instead.
 
 The smoke test checks the chat reply, tool call and KV cache; it prints
 `smoke: ok` when those checks pass.
@@ -116,7 +112,6 @@ In `.env.example`:
 | `API_KEY` | unset | bearer key required on `/v1`; unset means no key |
 | `SERVED_MODEL_NAME` | `glm-5.3-flash` | the model id clients send |
 | `MODELS_DIR` | `models/` in this repo | where the checkpoints go; give an absolute path |
-| `RUNTIME` | `container` | `native` runs the engine from a venv instead ([Native install](#native-install-for-developers)); a checkout that already has a native install keeps it |
 | `P2P` | `auto` | [content-verified peer access](#pcie-peer-to-peer) for TP and PP; `off` disables, `force` bypasses the check |
 | `VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE` | `1` after a pass, otherwise `0` | custom all-reduce (TP); an explicit `0` is preserved after a pass |
 
@@ -182,12 +177,11 @@ chat/tool requests; it does not repeat the boot check.
 |---|---|
 | `./start.sh` | preflight → install → download → launch → wait for `/health` |
 | `./start.sh restart` | stop, then start (picks up `.env` changes) |
-| `./start.sh status` | runtime and layout, container, `/health`, KV line, install and checkpoint state |
+| `./start.sh status` | layout, container, `/health`, KV line, install and checkpoint state |
 | `./start.sh logs` | follow `logs/serve.log` |
 | `./start.sh smoke` | one chat request and one tool call |
 | `./start.sh stop` | stop the server this checkout started |
 | `./start.sh update` | `git pull`, pull the new engine if the pin moved, restart |
-| `IMAGE=<earlier image> ./start.sh update` | roll back to an earlier engine, for that run only |
 | `DRY=1 ./start.sh` | print what would be pulled, downloaded and launched, without doing it |
 
 `stop` only stops the container recorded in `logs/container.id`, after
@@ -195,79 +189,48 @@ confirming it carries this checkout's label; it never matches by name alone,
 so another container or vLLM on the same machine is never touched.
 
 The engine pin lives in `start.sh`, so a `git pull` can move it, and `start.sh`
-pulls the matching image whenever it changes. Set `IMAGE` in `.env` (see
-[`.env.advanced.example`](../.env.advanced.example)) to
-freeze it.
+pulls the matching image whenever it changes.
 
-**Updating from 1.6.x or 1.5.x.** Run `./start.sh update`. Release 1.7.0
-moves the engine and image pins. Explicit `.env` values remain in force;
-remove explicit `IMAGE` / `VLLM_COMMIT` values to follow the new pins.
-P2P defaults to `auto`, enabled only after the content check. RecoverSSM is
-on at TP4. Compiled decode stays on when installed; eligible TP4 and PP4
-prefill kernels use the new layout-specific switches.
-All-reduce flags and cached-boundary reuse default to `1`, and PP4 drafter
-width to `0`. Remove explicit old feature overrides to
-follow these defaults; see [Engine switches](engine-switches.md).
-`BOOT_CHECK=1` and empty `DEFAULT_REASONING_EFFORT` are the new defaults.
-`VLLM_BRANCH=ampere` selects the fork branch, while the full commit remains
-pinned. Remove an explicit old branch line to follow it.
+**Updating from an earlier release.** Run `./start.sh update`: it pulls this
+release, restarts into its `start.sh`, pulls the new image if the pin moved and
+restarts the server. Your `.env` is kept and its explicit values stay in force;
+each release's [CHANGELOG](../CHANGELOG.md) entry names the lines to delete to
+follow its new defaults. With Docker Compose: `git pull`, then
+`docker compose up -d`.
 
-**Updating from 1.4.x.** Run `./start.sh update`. Release 1.5.0 moves the
-engine and image pins; your `.env`, including explicit `IMAGE`, `VLLM_COMMIT`
-and runtime-switch overrides, is preserved. Remove an old explicit pin only
-if you want to follow this release. The image includes optional Marlin:
-release 1.5.0 enabled unset PP4 decode and left unset TP4 decode off.
-For current defaults and native compilation, see
-[Optional compiled Marlin](compiled-marlin.md); without an installed library,
-unset decode remains off. The allocator default remains
-`expandable_segments:False`, with explicit allocator overrides preserved.
+**From a native install.** Earlier releases could run the engine natively from
+`venv/`. This release runs it only in the container, and `./start.sh update`
+(or `restart`) moves the checkout over:
 
-**Updating from 1.3.x.** Run `./start.sh update`, nothing else. What happens:
+1. It checks Docker first. Without a usable Docker and NVIDIA Container
+   Toolkit it stops with a message and leaves the native server running;
+   install them ([What you need](#what-you-need)) and run `./start.sh update`
+   again.
+2. It pulls the image, stops the native server (only the process recorded in
+   `logs/vllm.pid`, after confirming it is this checkout's server) and starts
+   the container with your `.env` and the checkpoints already in `MODELS_DIR`.
+   Complete checkpoints are not downloaded again.
+3. It says what it did and deletes nothing: `venv/` and `vllm-src/` stay until
+   you remove them, and `./start.sh status` mentions them while they exist.
+4. The first container start compiles its kernel caches into `./cache`, so it
+   is slower; `No available shared memory broadcast block found in 60 seconds`
+   lines meanwhile are harmless.
 
-1. It pulls this release and restarts into its `start.sh`.
-2. Your checkout already has a native install, so it **stays native** (the
-   container is the default only for fresh checkouts).
-3. The engine pin moved to a new upstream base, so `start.sh` **rebuilds the
-   venv** from scratch for the new engine and its own dependency pins (the checkpoints are not touched).
-4. It boots the server. **The first boot can be slower** while FlashInfer fills an empty compile cache; the log may show
-   `No available shared memory broadcast block found in 60 seconds` lines
-   meanwhile, which are harmless.
-5. The layout stays tensor-parallel 4. Peer access follows `P2P=auto` unless
-   overridden, with a content check before use. Explicit allocator overrides
-   are preserved.
+`RUNTIME`, `VLLM_COMMIT` and `VLLM_BUILD_AMPERE_MARLIN` in `.env` no longer do
+anything; `./start.sh` warns about them until you delete them. A plain
+`./start.sh` while the native server is still running refuses and points to
+`./start.sh update`.
 
-**Moving a native install to the container.** Install Docker and the NVIDIA
-Container Toolkit ([What you need](#what-you-need)), then set
-`RUNTIME=container` in `.env` and run `./start.sh restart`: it stops the native
-server, pulls the image and starts the container on the same checkpoints.
-`RUNTIME=native` and another restart go back. The venv stays on disk until you
-delete `venv/` and `vllm-src/` yourself.
-
-**Rolling back.** `IMAGE=<image> ./start.sh update` rolls the engine back for
-that run only; the next plain `./start.sh` or `restart` goes back to this
-release's image. To stay rolled back, set `IMAGE=<image>` in `.env`. Release
-1.3.x's image is
-`ghcr.io/morrowmake/vllm-cmp170hx@sha256:ee978fb3e3d11cf8577a014539a7ad4e2a8dff95163fc5d96c0a06fcf9c64640`.
-That changes the engine only; to go back to an earlier release's scripts and
-defaults as well, check out its tag (`git checkout v1.3.1`, then
-`./start.sh restart`; back again with `git checkout main` and
-`./start.sh update`). Releases before 1.4.0 install natively.
-
-**Older releases keep installing.** Each release pins the fork by commit, and
-the fork's branch moves to a newer upstream from time to time. Every commit a
-release has pinned is kept on the fork under a tag, `glm53-recipe-<version>`,
-so an older release — or a rollback to its engine — still finds its commit
-after the branch has moved on. Engine pins from 1.1.0 on can be installed;
-1.0.x's pin predates the first rebase of the fork branch and cannot.
+Older releases are git tags; their images may be retired.
 
 ## Advanced
 
 Advanced settings: peer-to-peer policy, the engine's kill switches,
-link width, running the container yourself and the native developer install.
+link width, running the container yourself and Docker Compose.
 
 ### PCIe peer-to-peer
 
-`P2P=auto` is the default for both container and native starts. Before the
+`P2P=auto` is the default for every start. Before the
 server starts with TP > 1 or PP > 1, the recipe checks every ordered pair of
 visible GPUs. It requires peer access to be advertised, then copies random
 bytes with `cudaMemcpyPeer`, writes and reads through peer access with an SM
@@ -362,66 +325,41 @@ for running it without `./start.sh`.
 ### Docker Compose
 
 [`docker-compose.yml`](../docker-compose.yml) at the root of this repository
-starts the same container `./start.sh` launches: the release image by digest,
-all four cards, the same shared-memory size, the API on `127.0.0.1:8000`
-only, the checkpoints mounted read-only, `./cache` for the kernel compile
-caches, and the server running as you with the same cache environment, from
-[`container.env`](../docker/container.env). `./start.sh` does not use it; use
-one or the other.
+is the other one-command start. From a fresh clone, after the one-time host
+setup ([What you need](#what-you-need)):
 
 ```bash
-./install.sh && ./download.sh      # the image and the two checkpoints
-mkdir -p cache
-HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d
-docker compose logs -f             # wait for "Application startup complete"
-docker compose down                # stop
+docker compose up                  # download, then serve in the foreground
+docker compose up -d               # the same in the background
+docker compose ps                  # the server shows (healthy) once /health answers
+docker compose logs -f             # follow it
+docker compose down                # stop (allows 120 s for a clean shutdown)
 ```
 
-`LAYOUT=pp4` (in the shell or in `.env`) selects pipeline-parallel 4; any
+Two services run in order:
+
+- **`prepare`** makes `./cache` and the model directory (`MODELS_DIR`, default
+  `./models`) writable by the serving user, then downloads the two checkpoints
+  as that user (~180 GiB). An interrupted download resumes; complete
+  checkpoints are skipped without contacting Hugging Face, so later starts go
+  straight to the server. Docker creates a missing directory as root; `prepare`
+  hands such a directory to the serving user, but never changes the owner of
+  existing checkpoints or of anything else in the model directory, and never
+  deletes anything. It must finish successfully before the server starts.
+- **The server** is the same container `./start.sh` launches: the release image
+  by digest, all four cards, the same shared-memory size, the API on
+  `127.0.0.1:8000` only, the checkpoints mounted read-only, `./cache` for the
+  kernel compile caches and the settings in
+  [`container.env`](../docker/container.env), with this repository's
+  `serve.sh` as its entry point. It switches to the serving user before
+  `serve.sh` runs, so it never serves as root. It reports healthy once
+  `/health` answers (`docker compose ps`).
+
+The serving user is the owner of this checkout, so it works for any user with
+no settings; set `HOST_UID` and `HOST_GID` (in the shell or in `.env`) to use
+another. `LAYOUT=pp4` (in the shell or in `.env`) selects pipeline-parallel 4,
+`MODELS_DIR` moves the checkpoints and `HF_TOKEN` speeds up the download; any
 other setting goes in [`container.env`](../docker/container.env), as for the
-`docker run` command.
-
-### Native install (for developers)
-
-`RUNTIME=native` builds the engine on this machine instead: a venv with the
-fork checked out at the pin, installed editable, so you can change the engine's
-Python and restart. A checkout that already has a native install from an
-earlier release keeps using it. It needs, in addition to the above:
-
-| | |
-|---|---|
-| CUDA | a 13.x toolkit at `/usr/local/cuda-13.3`, or set `CUDA_HOME` |
-| Tools | `uv`, Python 3.12, `wget` for the CUDA commands |
-| Disk | about 20 GiB for the venv, the engine source and compile caches |
-
-```bash
-RUNTIME=native ./install.sh    # build ./venv and the pinned vLLM fork
-RUNTIME=native ./start.sh      # or set RUNTIME=native in .env
-```
-
-`./serve.sh` runs a native server in the foreground instead if you prefer; it
-reads its settings from the environment, not from `.env`. A server started
-that way is invisible to `./start.sh status`, `stop` and `restart`: stop it with
-Ctrl-C before using `./start.sh` again.
-
-Rolling back a native install works the same way with the engine commit:
-`VLLM_COMMIT=<sha> ./start.sh update` for one run, or `VLLM_COMMIT=<sha>` in
-`.env` to stay there. When the pin moves to a new upstream base, `start.sh`
-rebuilds the venv, because the engine's own dependency pins change with it.
-
-**CUDA.** You need a 13.x toolkit. These commands are for Ubuntu. NVIDIA had no
-working `ubuntu2604` repository index when we built this, so we used the
-`ubuntu2404` one:
-
-```bash
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
-sudo dpkg -i cuda-keyring_1.1-1_all.deb
-sudo apt-get update
-sudo apt-get install -y cuda-toolkit-13-3
-```
-
-The install uses upstream's **precompiled** base CUDA extensions, which already
-carry sm_80 code. Those base extensions remain usable: the optional Marlin
-CUDA/C++ extension is distinct and is compiled only with
-`VLLM_BUILD_AMPERE_MARLIN=1`. To compile the base extensions yourself:
-`BUILD_FROM_SOURCE=1 MAX_JOBS=16 ./install.sh` (full toolkit and build scratch space required).
+`docker run` command. `./start.sh` does not use this file; use one or the
+other (they share the container name, so a second start fails rather than
+doubling up on the cards).

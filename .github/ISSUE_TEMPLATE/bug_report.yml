@@ -39,9 +39,9 @@ body:
     attributes:
       label: Runtime
       options:
-        - container (default)
-        - native
+        - ./start.sh (default)
         - docker compose
+        - docker run by hand
     validations:
       required: true
   - type: input

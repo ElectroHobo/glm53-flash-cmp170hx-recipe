@@ -1,28 +1,57 @@
-# The same container ./start.sh launches, for people who prefer Docker Compose.
+# The same container ./start.sh launches, as one command from a fresh clone:
+#
+#   docker compose up              # download the checkpoints, then serve
+#   docker compose up -d           # the same in the background
+#   docker compose ps              # the server shows (healthy) once /health answers
+#   docker compose logs -f         # follow it
+#   docker compose down            # stop (allows 120 s for a clean shutdown)
+#
+# `prepare` runs first and must finish: it makes ./cache and the model
+# directory writable by the serving user and downloads the two checkpoints
+# (~180 GiB; resumed if interrupted, skipped once complete). The serving user
+# is whoever owns this checkout, so no user settings are needed; HOST_UID and
+# HOST_GID override it. The server then starts as that user, never as root,
+# with the release image, serve.sh and docker/container.env that ./start.sh
+# uses. The one-time host setup (driver, Docker, NVIDIA Container Toolkit) is
+# in the README.
+#
 # ./start.sh does not use this file; use one or the other, not both at once
 # (they share the container name, so a second start fails rather than
-# doubling up on the cards).
-#
-# Before the first start, from the root of this repository:
-#   ./install.sh && ./download.sh     # the image and the two checkpoints
-#   mkdir -p cache                    # kernel compile caches, owned by you
-# Then:
-#   HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d
-#   docker compose logs -f            # wait for "Application startup complete"
-#   docker compose down               # stop (allows 120 s for a clean shutdown)
-#
-# LAYOUT (tp4 or pp4), IMAGE and MODELS_DIR are read from the shell or from
-# .env; every other setting goes in docker/container.env (see
-# docs/how-to-use.md). The API is published on 127.0.0.1:8000 only and has
-# no API key.
+# doubling up on the cards). LAYOUT (tp4 or pp4), MODELS_DIR and HF_TOKEN
+# are read from the shell or from .env; every other setting goes in
+# docker/container.env (see docs/how-to-use.md). The API is published on
+# 127.0.0.1:8000 only and has no API key.
+
+x-image: &image ${IMAGE:-ghcr.io/morrowmake/vllm-cmp170hx@sha256:0d249835cb8502316403350a3cad9d531b46e5249e4076ecb70faa42067b5b7a}
 
 services:
+  prepare:
+    image: *image
+    user: "0:0"
+    entrypoint: ["/bin/bash", "/recipe/prepare.sh"]
+    command: ["prepare"]
+    environment:
+      HOST_UID: ${HOST_UID:-}
+      HOST_GID: ${HOST_GID:-}
+      HF_TOKEN:
+      HF_HOME: /tmp/hf
+    volumes:
+      - ./docker/prepare.sh:/recipe/prepare.sh:ro
+      - .:/checkout:ro
+      - ${MODELS_DIR:-./models}:/models
+      - ./cache:/cache
+
   glm53-flash:
-    image: ${IMAGE:-ghcr.io/morrowmake/vllm-cmp170hx@sha256:343a15f5d60fe4f00898391efd5998109ff90ecdb9a242bac44f42332d176a62}
+    image: *image
     container_name: glm53-flash
-    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+    # Starts as root only to switch to the owner of /cache (the serving user
+    # prepare chose) before serve.sh runs.
+    user: "0:0"
     working_dir: /cache
-    entrypoint: ["/bin/bash", "/recipe/serve.sh"]
+    entrypoint: ["/bin/bash", "/recipe/prepare.sh", "serve"]
     command: ["dflash"]
     shm_size: 16g
     stop_grace_period: 120s
@@ -35,6 +64,7 @@ services:
       RECIPE_CACHE_ROOT: /cache
       TMPDIR: /cache/tmp
     volumes:
+      - ./docker/prepare.sh:/recipe/prepare.sh:ro
       - ./serve.sh:/recipe/serve.sh:ro
       - ./boot_check.py:/recipe/boot_check.py:ro
       - ./p2p_check.py:/recipe/p2p_check.py:ro
@@ -43,6 +73,12 @@ services:
       - ${MODELS_DIR:-./models}/GLM-5.3-Flash-W4A16-MTP:/models/GLM-5.3-Flash-W4A16-MTP:ro
       - ${MODELS_DIR:-./models}/GLM-5.3-Flash-DFlash2:/models/GLM-5.3-Flash-DFlash2:ro
       - ./cache:/cache
+    healthcheck:
+      test: ["CMD", "/opt/venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 1800s
     deploy:
       resources:
         reservations:

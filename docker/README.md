@@ -1,15 +1,15 @@
 # Container image
 
-The engine in a container: the way this recipe runs by default. `./start.sh`
-pulls the image, starts it and manages it for you (see the
+The engine in a container: the only way this recipe runs. `./start.sh` and
+`docker compose up` pull the image, start it and manage it for you (see the
 [How to use this repo](../docs/how-to-use.md)); this page describes the
-image, how to build it, and how to run it by hand without `./start.sh`.
+image, how to build it, and how to run it by hand with `docker run`.
 
 ## What the image contains
 
 - **Engine:** the [vLLM fork](https://github.com/Morrowmake/vllm-cmp170hx/tree/ab60b723ada254a442a4ba5ff27bf837aa27ef83)
   pinned at `ab60b723ada254a442a4ba5ff27bf837aa27ef83` (1.7.2, on upstream `e55d076f89`), installed
-  the way the native install does it: Python 3.12, torch 2.13.0 (CUDA 13.0
+  as an editable install: Python 3.12, torch 2.13.0 (CUDA 13.0
   build), the fork installed editable in `/opt/venv` with upstream's
   precompiled extensions, then the runtime extras the engine pins (FlashInfer
   0.7.0, humming-kernels 0.1.16, TileLang). The base `e55d076f89` has no nightly
@@ -74,7 +74,7 @@ The final source tree remains editable Python source, but is not a Git checkout.
 Its root-owned, read-only `/opt/vllm-src/provenance.json` records `schema` (1),
 `engine_commit` (full hash), `engine_repository` (public fork URL) and
 `engine_version` (installed version). The OCI revision label retains the same
-commit. Native installations remain Git checkouts and keep their update behavior.
+commit.
 Layer assembly rejects retained Git metadata/object stores and forbidden build
 paths, including standard nested gzip, bzip2, xz, tar and zip payloads. Set
 `IMAGE_FORBIDDEN_STRINGS` to a JSON array of additional identifying strings for
@@ -162,15 +162,16 @@ curl http://127.0.0.1:8000/health
 ```
 
 If you built the image yourself, use your tag in place of `$IMAGE`. The same
-launch as a Compose file is [`docker-compose.yml`](../docker-compose.yml) at the
-root of this repository ([Docker Compose](../docs/how-to-use.md#docker-compose)).
+launch, with the checkpoint download and storage ownership handled for you, is
+[`docker-compose.yml`](../docker-compose.yml) at the root of this repository
+([Docker Compose](../docs/how-to-use.md#docker-compose)).
 
 **Layout.** [`container.env`](container.env) sets `LAYOUT=tp4`; change it to
 `LAYOUT=pp4` for pipeline-parallel 4. `serve.sh` inside the container turns
 the layout and any other setting from [`.env.example`](../.env.example) or
 [`.env.advanced.example`](../.env.advanced.example) that
-you add to `container.env` into the same flags as a native start, so the
-server is the same either way.
+you add to `container.env` into the same flags as `./start.sh`'s container
+gets, so the server is the same either way.
 
 Inside the container the server listens on every interface;
 `-p 127.0.0.1:8000:8000` keeps it reachable from this machine only, as

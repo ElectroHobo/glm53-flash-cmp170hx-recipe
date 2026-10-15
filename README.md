@@ -29,6 +29,46 @@ patches on making it fast and making it repeatable. It ships as a container
 image, so the engine and its Python environment stay out of your system.
 P2P is enabled automatically after a startup [content check](docs/how-to-use.md#pcie-peer-to-peer) passes; otherwise the server runs with P2P disabled.
 
+## Quick start
+
+One command from a fresh clone, after the [one-time host setup](#one-time-host-setup):
+
+```bash
+git clone https://github.com/Morrowmake/glm53-flash-cmp170hx-recipe.git
+cd glm53-flash-cmp170hx-recipe
+./start.sh          # pull the engine image, fetch the model, start, wait for /health
+```
+
+Then try it:
+
+```bash
+./start.sh smoke    # one chat request and one tool call
+curl http://127.0.0.1:8000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model": "glm-5.3-flash",
+       "messages": [{"role": "user", "content": "Write a haiku about PCIe."}],
+       "max_tokens": 400}'
+```
+
+`./start.sh` skips anything already done, so running it twice is safe; an
+interrupted download resumes. Matching
+warm-cache seeds reuse compilation caches ([details](docker/RELEASE.md#compilation-cache-seeds)).
+Any OpenAI-compatible client works with base URL `http://127.0.0.1:8000/v1`
+and model `glm-5.3-flash`. The API listens on this machine only and has no
+API key unless you [change that](docs/how-to-use.md#serving-other-machines).
+Python, streaming and tool-call clients are in [examples/](examples/README.md).
+
+**Prefer Docker Compose?** The same container, also one command from a fresh
+clone:
+
+```bash
+docker compose up              # or in the background: docker compose up -d
+```
+
+It downloads the checkpoints, then starts the server as the owner of the
+checkout; `docker compose ps` shows it healthy once `/health` answers
+([Docker Compose](docs/how-to-use.md#docker-compose)). Use one or the other.
+
 > **Which setups this release is for.** Two layouts, one switch
 > (`LAYOUT=tp4` or `LAYOUT=pp4`):
 >
@@ -44,14 +84,19 @@ P2P is enabled automatically after a startup [content check](docs/how-to-use.md#
 > `./start.sh` checks your link width and suggests `LAYOUT=pp4` if a card is
 > narrower than x16.
 
-## What you need
+## One-time host setup
 
 - **4× NVIDIA CMP 170HX, each exposing 64 GiB**; **PCIe Gen2 x16 links** for
   tensor-parallel 4 (pipeline-parallel 4 is built for narrower links)
 - Linux with NVIDIA driver **580 or newer**
-- Docker with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
-  (not needed for the [native install](docs/how-to-use.md#native-install-for-developers))
-- `git`, `curl`, `flock`, `setsid`, Python 3 for the boot check, and `jq` for the smoke test
+- Docker with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html),
+  usable by your user: `docker run --rm --gpus all nvidia/cuda:13.3.1-base-ubuntu24.04 nvidia-smi`
+  lists all four cards
+- optional: a P2P-capable driver build for verified peer-to-peer
+  ([PCIe peer-to-peer](docs/how-to-use.md#pcie-peer-to-peer)); without it the
+  server runs with P2P disabled
+- for `./start.sh`: `git`, `curl`, `flock`, `setsid`, Python 3 for the boot
+  check, and `jq` for the smoke test
 - about 180 GiB (193 GB) of disk for the two checkpoints, plus the engine image
   and the kernel compile caches ([details](docs/how-to-use.md#what-you-need))
 
@@ -82,29 +127,6 @@ user and 3 under load. Quality on the final release build: TP4 HumanEval
 Neither layout shows a significant change from 1.6.0 (McNemar p ≥ 0.34).
 Method and exact figures: [Results](docs/results.md).
 
-## Quick start
-
-```bash
-git clone https://github.com/Morrowmake/glm53-flash-cmp170hx-recipe.git
-cd glm53-flash-cmp170hx-recipe
-./start.sh          # pull the engine image, fetch the model, start, wait for /health
-./start.sh smoke    # one chat request and one tool call
-curl http://127.0.0.1:8000/v1/chat/completions \
-  -H 'Content-Type: application/json' \
-  -d '{"model": "glm-5.3-flash",
-       "messages": [{"role": "user", "content": "Write a haiku about PCIe."}],
-       "max_tokens": 400}'
-```
-
-`./start.sh` skips anything already done, so running it twice is safe. Matching
-warm-cache seeds reuse compilation caches ([details](docker/RELEASE.md#compilation-cache-seeds)).
-Any OpenAI-compatible client works with base URL `http://127.0.0.1:8000/v1`
-and model `glm-5.3-flash`. The API listens on this machine only and has no
-API key unless you [change that](docs/how-to-use.md#serving-other-machines).
-Prefer Docker Compose? [`docker-compose.yml`](docker-compose.yml) starts the
-same container ([Docker Compose](docs/how-to-use.md#docker-compose)). Python,
-streaming and tool-call clients are in [examples/](examples/README.md).
-
 ## Settings
 
 Settings live in `.env`; see [Settings](docs/how-to-use.md#settings)
@@ -122,7 +144,7 @@ in `.env`); details in [Choosing a layout](docs/results.md#choosing-a-layout).
 
 - [Results](docs/results.md): throughput, quality, decode and prefill in detail
 - [How to use this repo](docs/how-to-use.md): install, settings, peer-to-peer,
-  kill switches, day to day, updates and rollback, native install, containers
+  kill switches, day to day, updates, Docker Compose, containers
 - [Optional compiled Marlin](docs/compiled-marlin.md): defaults, switches, building it
 - [How it works](docs/how-it-works.md): what makes it fast and correct, and what runs
 - [Engine switches](docs/engine-switches.md): the engine's internal switches, for troubleshooting
@@ -134,11 +156,13 @@ in `.env`); details in [Choosing a layout](docs/results.md#choosing-a-layout).
 - Found a problem? [Open an issue](https://github.com/Morrowmake/glm53-flash-cmp170hx-recipe/issues/new/choose);
   the bug template asks for the version, layout, peer-to-peer setting and log lines we need
 
-## Update and roll back
+## Update
 
 - `./start.sh update` pulls the new release and engine and restarts; your `.env` is preserved.
-- `IMAGE=<earlier image> ./start.sh update` rolls the engine back for that run; set `IMAGE` in `.env` to stay there.
-- More, including earlier releases' scripts: [Day to day](docs/how-to-use.md#day-to-day).
+  A checkout that ran the engine natively under an earlier release moves to the
+  container on the same `.env` and checkpoints ([details](docs/how-to-use.md#day-to-day)).
+- With Compose: `git pull`, then `docker compose up -d`.
+- Older releases are git tags; their images may be retired.
 
 ---
 

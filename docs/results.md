@@ -9,8 +9,7 @@ P2P, PCIe x16 links, 262,144-token context and 180 W per card.
 P2P-off results are no longer published. PP4 on x4 links is not measured.
 
 RecoverSSM is enabled at TP4; PP4 keeps its existing state-storage path.
-Compiled Marlin decode and eligible compiled prefill are included; native
-installs must opt into building the optional library to use those paths.
+Compiled Marlin decode and eligible compiled prefill are included.
 All-reduce flags and cached-boundary reuse default to `1`; PP4 drafter
 width defaults to `0`.
 
