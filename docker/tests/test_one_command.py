@@ -207,3 +207,24 @@ def test_retired_native_settings_are_named(tmp_path):
         assert name in run.stderr
     quiet = run_start(tmp_path, 'retired_settings\n', RUNTIME='container')
     assert quiet.stderr == ''
+
+
+@pytest.mark.parametrize('layout', ['tp4', 'pp4'])
+def test_dry_start_needs_no_engine_on_the_host(tmp_path, layout):
+    """The DRY launch shows serve.sh's whole result without the image's venv."""
+    import shutil
+    checkout = tmp_path / 'checkout'
+    shutil.copytree(ROOT, checkout, ignore=shutil.ignore_patterns(
+        '.git', '.env', 'models', 'cache', 'logs', 'venv', 'vllm-src', '__pycache__'))
+    shim = tmp_path / 'shim'
+    shim.mkdir()
+    for name in ('nvidia-smi', 'docker'):
+        (shim / name).write_text('#!/bin/sh\nexit 1\n')
+        (shim / name).chmod(0o755)
+    run = subprocess.run(['bash', str(checkout / 'start.sh')], capture_output=True, text=True,
+                         env={'HOME': str(tmp_path), 'PATH': f'{shim}:/usr/bin:/bin',
+                              'DRY': '1', 'LAYOUT': layout, 'NEED_DISK_GB': '0'}, timeout=60)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert 'No such file' not in run.stdout + run.stderr
+    assert '[ampere-marlin] DRY=1 without the engine at /opt/venv' in run.stdout
+    assert 'serve.sh: DRY=1, command:' in run.stdout

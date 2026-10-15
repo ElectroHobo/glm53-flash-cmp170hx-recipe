@@ -336,6 +336,12 @@ echo "serve.sh: KV accounting: MAMBA_INFLIGHT_STATES=$VLLM_KV_MAMBA_INFLIGHT_STA
 if [ "${VLLM_GLM5_MARLIN_DECODE_CUDA+x}" != x ]; then
   VLLM_GLM5_MARLIN_DECODE_CUDA=0
   if { [ "$PP" = 4 ] && [ "$TP" = 1 ]; } || { [ "$TP" = 4 ] && [ "$PP" = 1 ]; }; then
+   if [ "${DRY:-0}" = 1 ] && [ ! -x "$VENV/bin/python" ]; then
+    # A dry run on a host has no engine to look into; show the default the
+    # image gives (its build requires the optional library).
+    VLLM_GLM5_MARLIN_DECODE_CUDA=1
+    echo "serve.sh: [ampere-marlin] DRY=1 without the engine at $VENV: showing the image default"
+   else
     VLLM_GLM5_MARLIN_DECODE_CUDA="$(CUDA_VISIBLE_DEVICES= "$VENV/bin/python" - <<'PY'
 import importlib.machinery
 import importlib.util
@@ -350,6 +356,7 @@ PY
     if [ "$VLLM_GLM5_MARLIN_DECODE_CUDA" = 0 ]; then
       echo "serve.sh: [ampere-marlin] optional library absent; unset decode defaults OFF (native build remains opt-in)"
     fi
+   fi
   fi
 fi
 export VLLM_GLM5_MARLIN_DECODE_CUDA
@@ -588,8 +595,10 @@ if [ "$MODE" = dflash ]; then
   # Only unset tables belong to this launcher: explicit values (including empty)
   # stay byte-for-byte intact for the config consumer to validate. Depth 2 uses
   # its own measured tables or the consumer's forced-depth calibration route.
+  # Standard library only: python3 from PATH is the engine's interpreter in the
+  # image and needs no engine for a dry run on a host.
   if [ -z "${VLLM_GLM5_DFLASH_ADAPTIVE_K_COSTS+x}" ] || [ -z "${VLLM_GLM5_DFLASH_ADAPTIVE_K_COSTS_MULTI+x}" ]; then
-    DEFAULT_COST_TABLES=$("$VENV/bin/python" - "${SPEC_N:-3}" "$PP" ${EXTRA_ARGS:-} <<'PY'
+    DEFAULT_COST_TABLES=$(python3 - "${SPEC_N:-3}" "$PP" ${EXTRA_ARGS:-} <<'PY'
 import json
 import os
 import sys

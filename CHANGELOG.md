@@ -40,6 +40,10 @@
   complete. A checkpoint now counts as present only with its config, every shard its
   index names and no partial download left behind; `./start.sh` and Compose use the
   same check.
+- **`DRY=1 ./start.sh` prints the server's full settings.** The dry run stopped with
+  "cannot determine optional Marlin installation" on a host without the engine, so
+  the settings `serve.sh` would use were never printed. It now prints them in full;
+  the compiled-Marlin default it shows is the image's. Real starts are unchanged.
 - **`MM_CAP=1`: images above the prefill chunk were refused with HTTP 400** (#11). The
   launcher bounded images with `max_pixels`, which the memory profiler read but the
   GLM-5.3 image processor ignores, so the encoder cache was sized for small images while
