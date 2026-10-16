@@ -113,7 +113,7 @@ In `.env.example`:
 | `SERVED_MODEL_NAME` | `glm-5.3-flash` | the model id clients send |
 | `MODELS_DIR` | `models/` in this repo | where the checkpoints go; give an absolute path |
 | `P2P` | `auto` | [content-verified peer access](#pcie-peer-to-peer) for TP and PP; `off` disables, `force` bypasses the check |
-| `VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE` | `1` after a pass, otherwise `0` | custom all-reduce (TP); an explicit `0` is preserved after a pass |
+| `VLLM_CUSTOM_ALLREDUCE_PCIE_P2P` | TP4: `1` after a pass, otherwise `0` | custom all-reduce (TP); an explicit `0` is preserved after a pass |
 
 Commonly used from `.env.advanced.example`:
 
@@ -122,8 +122,8 @@ Commonly used from `.env.advanced.example`:
 | `MAX_LEN` | `262144` | context ceiling; lower it for more concurrent full-length requests |
 | `MAX_SEQS` | `8` | concurrent requests |
 | `GPU_UTIL` | `0.95` | share of each card's memory the engine may use |
-| `SPEC_N` | `3` | draft depth under load for the DFlash2 drafter (the only supported mode) |
-| `MAX_BATCHED` | `3460` (TP4), `2312` (PP4) | sets the prefill chunk: 3,456 / 2,304 tokens; `2048` gives 1,152 |
+| `SPEC_N` | unset | draft tokens per step for `mtp` only; DFlash2 (the only supported mode) uses the layout's adaptive depth, up to 7 ([Draft depth](engine-switches.md#draft-depth)) |
+| `MAX_BATCHED` | `3463` (TP4), `2312` (PP4) | sets the prefill chunk: 3,456 / 2,304 tokens; `2048` gives 1,152 |
 | `FAIR_PREFILL` / `FAIR_CHUNK` | `1` / `384` | fair prefill and its slice size while others decode |
 | `PREFILL_CAP` | `0` | upstream's unconditional chunk cap. **Leave it 0**: it turns the prefill features off |
 | `MM_CAP` | `0` | `1` bounds image and video inputs, which reduces the multimodal memory reservation. Each image, and each whole video, is capped at `MM_MAX_IMAGE_TOKENS` tokens (default `MM_MAX_PIXELS / 784` = 1280) |
@@ -258,15 +258,16 @@ the same boot, remove the check cache before retrying.
 advertise peer access while writes land in the wrong memory; NCCL may then
 hang. The startup content check decides whether this recipe uses P2P.
 
-A pass enables `VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE=1` by default, uses the
+A pass enables `VLLM_CUSTOM_ALLREDUCE_PCIE_P2P=1` under TP by default, uses the
 release custom all-reduce selection (`1` for flags-in-data), clears `NCCL_P2P_DISABLE`, and sets
-`NCCL_P2P_LEVEL=SYS` for TP or PP through `GLM5_NCCL_P2P_SYS=1`.
+`NCCL_P2P_LEVEL=SYS` through `GLM5_NCCL_P2P_SYS=1`: under TP while the custom
+all-reduce is on, and under PP for the stage transfers.
 An explicit custom-all-reduce `0` is preserved after a pass. An explicit
 `NCCL_P2P_LEVEL` wins; `GLM5_NCCL_P2P_SYS=0` suppresses the automatic SYS setting.
 
 If any pair does not advertise access, any byte differs, or the check cannot
 complete, the engine starts with P2P disabled:
-`VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE=0`, `NCCL_P2P_LEVEL` unset and
+`VLLM_CUSTOM_ALLREDUCE_PCIE_P2P=0`, `NCCL_P2P_LEVEL` unset and
 `NCCL_P2P_DISABLE=1`. This includes PP4 stage transfers. The `[p2p]` banner
 says `not advertised`, `advertised but data check failed`, or `check unavailable`
 and gives the reason. TP can use the host-staged all-reduce instead.
@@ -303,7 +304,7 @@ without a rebuild. The full list, and how to use the switches for
 troubleshooting, is in [Engine switches](engine-switches.md).
 
 ```bash
-VLLM_GLM5_DECODE_KERNELS=0 ./start.sh restart
+VLLM_AMPERE_DECODE_KERNELS=0 ./start.sh restart
 ```
 
 ### Link width

@@ -40,7 +40,7 @@
 #   ./start.sh help            this text
 #
 # The image includes the optional compiled Marlin library. Runtime switch
-# VLLM_GLM5_MARLIN_DECODE_CUDA=1 enables compiled decode; unset, decode is on
+# VLLM_AMPERE_MARLIN_DECODE_CUDA=1 enables compiled decode; unset, decode is on
 # in both layouts.
 #
 # Config lives in .env, copied from .env.example on first run. A prefix env
@@ -48,7 +48,7 @@
 #
 #   LAYOUT=pp4 ./start.sh restart
 #   MAX_LEN=131072 ./start.sh restart
-#   VLLM_GLM5_DECODE_KERNELS=0 ./start.sh restart
+#   VLLM_AMPERE_DECODE_KERNELS=0 ./start.sh restart
 #
 # DRY=1 ./start.sh runs the preflight, says whether it would install or
 # download, and prints the server environment and launch command. It installs,
@@ -612,7 +612,6 @@ container_env() {
     echo "TORCHINDUCTOR_CACHE_DIR=/cache/torchinductor"
     echo "TRITON_CACHE_DIR=/cache/.triton/cache"
     echo "TORCH_EXTENSIONS_DIR=/cache/.cache/torch_extensions"
-    echo "VLLM_CUSTOM_ALLREDUCE_FLAGS_BUILD_DIR=/cache/.cache/vllm/custom_all_reduce_flags"
     echo "VLLM_CACHE_ROOT=/cache/.cache/vllm"
     echo "TILELANG_CACHE_DIR=/cache/.tilelang/cache"
     echo "TILELANG_TMP_DIR=/cache/.tilelang/cache/tmp"

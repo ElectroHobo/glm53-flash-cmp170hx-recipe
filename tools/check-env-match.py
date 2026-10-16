@@ -12,8 +12,6 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 DIAGNOSTICS = {
-    "VLLM_GLM5_DFLASH_CONFIDENCE_LOG",
-    "VLLM_GLM5_DFLASH_ADAPTIVE_K_LOG",
     "VLLM_GLM5_DFLASH_ADAPTIVE_K_FORCE_FILE",
 }
 
@@ -35,7 +33,7 @@ def check(reference):
             expected = reference[layout]
             environment = {
                 "PATH": os.defpath, "CUDA_VISIBLE_DEVICES": "", "DRY": "1",
-                "LAYOUT": layout, "VENV": scratch, "PYTHONPATH": scratch,
+                "LAYOUT": layout, "P2P": "force", "VENV": scratch, "PYTHONPATH": scratch,
             }
             result = subprocess.run(
                 ["bash", str(ROOT / "serve.sh")], cwd=ROOT,
@@ -48,14 +46,18 @@ def check(reference):
                                      result.stdout, re.M))
             command = shlex.split(result.stdout.split("DRY=1, command:\n", 1)[1])
             actual["MAX_BATCHED"] = command[command.index("--max-num-batched-tokens") + 1]
-            actual["GLM5_PP4_DRAFT_WIDTH"] = actual.get(
-                "VLLM_GLM5_DFLASH_ADAPTIVE_DRAFT_WIDTH")
-            print(f"{layout}: MAX_BATCHED checked in command; "
-                  "GLM5_PP4_DRAFT_WIDTH checked as resolved draft width")
+            print(f"{layout}: MAX_BATCHED checked in command; the speculative "
+                  "configuration is compared in --effective mode")
             ignored = {}
             for key, value in expected.items():
                 if key in DIAGNOSTICS:
                     ignored[key] = "diagnostic only"
+                elif (key == "VLLM_AMPERE_MARLIN_PREFILL_NARROW" and layout == "pp4"
+                        and str(value) == "1" and key not in actual
+                        and actual.get("VLLM_AMPERE_MARLIN_PREFILL_WIDE") == "1"
+                        and str(expected.get("VLLM_AMPERE_MARLIN_PREFILL_WIDE")) == "1"):
+                    ignored[key] = ("validation layout input; PP4 whole experts use intermediate "
+                                    "N=2048, not the TP4 selector's N=512 (see tools/env_effective.py)")
                 elif isinstance(value, str) and value.startswith(("/", "~/")):
                     ignored[key] = "path valued"
                 elif actual.get(key) != str(value):
@@ -66,8 +68,6 @@ def check(reference):
             extras = sorted(set(actual) - set(expected))
             print(f"{layout}: ignored exports unspecified by reference: "
                   + (", ".join(extras) or "none"))
-            if layout == "pp4" and "VLLM_GLM5_DECODE_KDA_V2_DEEP" in actual:
-                failures.append("pp4: unexpected VLLM_GLM5_DECODE_KDA_V2_DEEP export")
             print(f"{layout}: compared {len(expected) - len(ignored)} settings")
     if failures:
         print("Environment match: FAIL\n" + "\n".join(failures))

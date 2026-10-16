@@ -20,14 +20,12 @@ else
       echo '[p2p] P2P disabled: check unavailable' >&2
     }
 fi
+# After a pass serve.sh sets the release peer transports (custom all-reduce
+# under TP, NCCL_P2P_LEVEL); otherwise every peer transport is off.
 if [ "$P2P_ENABLED" = 1 ]; then
-  export VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE=${VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE:-1}
   unset NCCL_P2P_DISABLE
-  if [ "${GLM5_NCCL_P2P_SYS:-1}" = 1 ]; then
-    export NCCL_P2P_LEVEL=${NCCL_P2P_LEVEL:-SYS}
-  fi
 else
-  export VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE=0
+  export VLLM_CUSTOM_ALLREDUCE_PCIE_P2P=0
   unset NCCL_P2P_LEVEL
   export NCCL_P2P_DISABLE=1
 fi

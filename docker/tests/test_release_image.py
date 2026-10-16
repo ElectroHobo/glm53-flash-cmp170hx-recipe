@@ -196,7 +196,7 @@ def test_launcher_dry_no_cuda(tmp_path, enabled):
     import subprocess
     import sys
     env = dict(os.environ, CUDA_VISIBLE_DEVICES="", DRY="1", VLLM_IMAGE_CACHE_SEED=enabled,
-               VLLM_GLM5_MARLIN_DECODE_CUDA="0",
+               VLLM_AMPERE_MARLIN_DECODE_CUDA="0",
                VENV=sys.prefix, MODEL=str(tmp_path/"target"), DFLASH_MODEL=str(tmp_path/"draft"))
     result = subprocess.run(["bash", str(ROOT.parent/"serve.sh")], env=env, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
@@ -438,7 +438,7 @@ def test_container_setup_creates_private_tmp_and_writable_caches(tmp_path, seede
     assert resolved['XDG_CACHE_HOME'] == root + '/.cache'
     assert resolved['HF_HOME'] == '/cache/huggingface'
     for name in ('HOME', 'TRITON_CACHE_DIR', 'TORCH_EXTENSIONS_DIR',
-                 'VLLM_CUSTOM_ALLREDUCE_FLAGS_BUILD_DIR', 'TILELANG_CACHE_DIR',
+                 'VLLM_CACHE_ROOT', 'TILELANG_CACHE_DIR',
                  'TILELANG_TMP_DIR', 'CUDA_CACHE_PATH', 'FLASHINFER_WORKSPACE_BASE',
                  'TORCHINDUCTOR_CACHE_DIR'):
         assert Path(resolved[name]).is_relative_to(root), name
@@ -463,7 +463,7 @@ def test_container_environment_matches_start(tmp_path):
     actual = dict(line.split('=', 1) for line in run.stdout.splitlines() if '=' in line)
     for key in ('HOME', 'XDG_CACHE_HOME', 'HF_HOME', 'TMPDIR', 'RECIPE_CACHE_ROOT',
                 'PYTHONDONTWRITEBYTECODE', 'TRITON_CACHE_DIR', 'TORCH_EXTENSIONS_DIR',
-                'VLLM_CUSTOM_ALLREDUCE_FLAGS_BUILD_DIR', 'VLLM_CACHE_ROOT',
+                'VLLM_CACHE_ROOT',
                 'TILELANG_CACHE_DIR', 'TILELANG_TMP_DIR', 'CUDA_CACHE_PATH',
                 'FLASHINFER_WORKSPACE_BASE', 'TORCHINDUCTOR_CACHE_DIR'):
         assert actual[key] == expected[key], key

@@ -1,5 +1,7 @@
 from pathlib import Path
 import json
+import os
+import subprocess
 import sys
 
 import pytest
@@ -8,10 +10,13 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import env_effective as effective
 
-ENV_SOURCE = '''environment_variables = {
-    "VLLM_GLM5_DECODE_KDA_STEP_TILE": lambda: bool(int(os.getenv("VLLM_GLM5_DECODE_KDA_STEP_TILE", "0"))),
-    "VLLM_GLM5_DFLASH_BOUNDARY_CACHE": lambda: bool(int(os.getenv("VLLM_GLM5_DFLASH_BOUNDARY_CACHE", "0"))),
-    "VLLM_GLM5_DFLASH_CONFIDENCE_LOG": lambda: os.getenv("VLLM_GLM5_DFLASH_CONFIDENCE_LOG", ""),
+UPSTREAM_SOURCE = '''environment_variables = {
+    "VLLM_SPARSE_INDEXER_MAX_LOGITS_MB": lambda: int(os.getenv("VLLM_SPARSE_INDEXER_MAX_LOGITS_MB", "512")),
+}'''
+FORK_SOURCE = '''FORK_ENV_VARS = {
+    "VLLM_GLM5_DECODE_KDA_WIDE": lambda: bool(int(os.getenv("VLLM_GLM5_DECODE_KDA_WIDE", "1"))),
+    "VLLM_DFLASH_BOUNDARY_CACHE": lambda: bool(int(os.getenv("VLLM_DFLASH_BOUNDARY_CACHE", "0"))),
+    "VLLM_GLM5_DFLASH_ADAPTIVE_K_FORCE_FILE": lambda: os.getenv("VLLM_GLM5_DFLASH_ADAPTIVE_K_FORCE_FILE", ""),
 }'''
 PARALLEL_SOURCE = '''class ParallelConfig:
     pipeline_parallel_size: int = 1
@@ -25,14 +30,17 @@ SCHEDULER_SOURCE = '''class SchedulerConfig:
 @pytest.fixture
 def leg(tmp_path, monkeypatch):
     monkeypatch.setattr(effective, "git_source", lambda fork, name: {
-        "vllm/envs.py": ENV_SOURCE,
+        "vllm/envs.py": UPSTREAM_SOURCE,
+        "vllm/sm80/envs.py": FORK_SOURCE,
         "vllm/config/parallel.py": PARALLEL_SOURCE,
         "vllm/config/scheduler.py": SCHEDULER_SOURCE,
     }[name])
     actual, command, _ = effective.dry_run(ROOT, "pp4")
     # The full fixture contains every captured key; no environment inheritance.
-    actual.pop("VLLM_GLM5_DECODE_KDA_STEP_TILE")
-    actual["VLLM_GLM5_DFLASH_CONFIDENCE_LOG"] = ""
+    # Validation-only keys at their pinned defaults: an engine default the
+    # launcher leaves unexported and an empty diagnostic.
+    actual["VLLM_GLM5_DECODE_KDA_WIDE"] = "1"
+    actual["VLLM_GLM5_DFLASH_ADAPTIVE_K_FORCE_FILE"] = ""
     for key in ("tensor_parallel_size", "long_prefill_token_threshold"):
         command.pop(key)
     return tmp_path / "effective_env_private.json", actual, command
@@ -45,21 +53,23 @@ def run(leg):
     return effective.check_effective(ROOT, path, "pp4", path.parent)
 
 
-def test_complete_pp4_environment_uses_proven_zero_default(leg, capsys):
+def test_complete_pp4_environment_uses_proven_engine_default(leg, capsys):
     assert run(leg) == 0
     output = capsys.readouterr().out
-    assert "step_tile=0" in output
-    assert "VLLM_GLM5_DECODE_KDA_STEP_TILE (explicit '0' equals fork default False" in output
+    assert ("MATCH VLLM_GLM5_DECODE_KDA_WIDE (explicit '1' equals fork default True; "
+            "vllm/sm80/envs.py:2" in output)
     assert "Full environment match: PASS (pp4; 0 mismatches)" in output
 
 
 @pytest.mark.parametrize("key,value", [
     ("UNEXPECTED_RUNTIME_SETTING", "1"),
     ("UNEXPECTED_RUNTIME_SETTING", "/some/path"),
-    ("VLLM_GLM5_DECODE_KDA_STEP_TILE", "1"),
-    ("VLLM_GLM5_DFLASH_CONFIDENCE_LOG", "diagnostic"),
-    ("VLLM_GLM5_DFLASH_BOUNDARY_CACHE", "0"),
+    ("VLLM_GLM5_DECODE_KDA_WIDE", "0"),
+    ("VLLM_GLM5_DFLASH_ADAPTIVE_K_FORCE_FILE", "diagnostic"),
+    ("VLLM_DFLASH_BOUNDARY_CACHE", "0"),
+    ("VLLM_SPARSE_INDEXER_MAX_LOGITS_MB", "512"),
     ("EXTRA_ARGS", "--enforce-eager"),
+    ("EXTRA_ARGS", "--enable-prompt-tokens-details --enforce-eager"),
     ("NCCL_P2P_DISABLE", "1"),
 ])
 def test_unlisted_validation_keys_and_changed_values_fail(leg, capsys, key, value):
@@ -69,15 +79,15 @@ def test_unlisted_validation_keys_and_changed_values_fail(leg, capsys, key, valu
 
 
 def test_extra_recipe_setting_cannot_hide_behind_missing_reference_key(leg, capsys):
-    leg[1].pop("VLLM_GLM5_DFLASH_BOUNDARY_CACHE")
+    leg[1].pop("VLLM_DFLASH_BOUNDARY_CACHE")
     assert run(leg) == 1
-    assert "environment: VLLM_GLM5_DFLASH_BOUNDARY_CACHE: validation=None" in capsys.readouterr().out
+    assert "environment: VLLM_DFLASH_BOUNDARY_CACHE: validation=None" in capsys.readouterr().out
 
 
 def test_changed_pinned_default_invalidates_equivalence(leg, monkeypatch):
     original = effective.git_source
     monkeypatch.setattr(effective, "git_source", lambda fork, name:
-                        original(fork, name).replace('STEP_TILE", "0"', 'STEP_TILE", "1"'))
+                        original(fork, name).replace('KDA_WIDE", "1"', 'KDA_WIDE", "0"'))
     assert run(leg) == 1
 
 
@@ -87,12 +97,19 @@ def test_changed_pinned_default_invalidates_equivalence(leg, monkeypatch):
     ("tensor_parallel_size", 4),
     ("long_prefill_token_threshold", 512),
     ("speculative_config", {"method": "dflash", "num_speculative_tokens": 7}),
+    ("enable_batch_sharded_sampling", True),
     ("enforce_eager", True),
 ])
 def test_command_changes_and_unexpected_flags_fail(leg, capsys, key, value):
     leg[2][key] = value
     assert run(leg) == 1
     assert f"command: {key}: validation=" in capsys.readouterr().out
+
+
+def test_adaptive_mapping_change_fails(leg, capsys):
+    leg[2]["speculative_config"]["adaptive_k"]["by_load"] = [5, 5, 3]
+    assert run(leg) == 1
+    assert "command: speculative_config: validation=" in capsys.readouterr().out
 
 
 def test_only_documented_paths_and_command_exclusions_pass(leg):
@@ -113,13 +130,12 @@ def test_empty_or_inconsistent_serve_log_fails(leg):
             effective.check_effective(ROOT, path, "pp4", path.parent)
 
 
-@pytest.mark.parametrize("layout,default,override", [("tp4", "1", "0"), ("pp4", "0", "1")])
-def test_step_tile_defaults_banners_and_explicit_overrides(layout, default, override, tmp_path):
-    _, _, stdout = effective.dry_run(ROOT, layout)
-    assert f"step_tile={default}" in stdout
+@pytest.mark.parametrize("layout,default", [("tp4", "1"), ("pp4", None)])
+@pytest.mark.parametrize("override", ("0", "1"))
+def test_marlin_decode_v2_layout_default_and_explicit_override(layout, default, override, tmp_path):
+    actual, _, _ = effective.dry_run(ROOT, layout)
+    assert actual.get("VLLM_AMPERE_MARLIN_DECODE_V2") == default
     # Exercise the launcher's explicit override using the same CPU fixture.
-    import os
-    import subprocess
     package = tmp_path / "vllm"
     package.mkdir()
     (package / "__init__.py").touch()
@@ -129,11 +145,10 @@ def test_step_tile_defaults_banners_and_explicit_overrides(layout, default, over
     result = subprocess.run(["bash", str(ROOT / "serve.sh")], env={
         "PATH": os.defpath, "DRY": "1", "P2P": "force", "LAYOUT": layout,
         "VENV": str(tmp_path), "PYTHONPATH": str(tmp_path),
-        "VLLM_GLM5_DECODE_KDA_STEP_TILE": override,
+        "VLLM_AMPERE_MARLIN_DECODE_V2": override,
     }, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert f"step_tile={override}" in result.stdout
-    assert f"  VLLM_GLM5_DECODE_KDA_STEP_TILE={override}" in result.stdout
+    assert f"  VLLM_AMPERE_MARLIN_DECODE_V2={override}" in result.stdout
 
 
 @pytest.mark.parametrize("key,value,changed", [
@@ -160,6 +175,16 @@ def test_matching_alias_does_not_hide_changed_live_command(leg, field, value):
     assert run(leg) == 1
 
 
+def test_validation_harness_keys_are_allowed_with_reasons(leg, capsys):
+    leg[1].update(CUDA_VISIBLE_DEVICES="0,1,2,3", LAB_MODEL="model", RAM_JOB_MARKER="marker",
+                  RAM_LEASE_TOKEN="token", GLM5_SERVING_TREE="/validation/tree")
+    assert run(leg) == 0
+    output = capsys.readouterr().out
+    for key in ("CUDA_VISIBLE_DEVICES", "LAB_MODEL", "RAM_JOB_MARKER", "RAM_LEASE_TOKEN",
+                "GLM5_SERVING_TREE"):
+        assert f"environment: allowed {key} (" in output
+
+
 def test_only_harness_pci_bus_id_is_allowed(leg):
     leg[1]["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     assert run(leg) == 0
@@ -178,14 +203,14 @@ def test_recipe_cuda_device_order_is_not_allowlisted(leg, monkeypatch):
     assert run(leg) == 1
 
 
-def test_tp4_selector_is_inert_only_with_pp4_whole_expert_path(leg):
-    leg[1]["VLLM_GLM5_TP4_MARLIN_PREFILL"] = "1"
+def test_narrow_selector_is_inert_only_with_pp4_whole_expert_path(leg):
+    leg[1]["VLLM_AMPERE_MARLIN_PREFILL_NARROW"] = "1"
     assert run(leg) == 0
-    leg[1]["VLLM_GLM5_PP_MARLIN_PREFILL"] = "0"
+    leg[1]["VLLM_AMPERE_MARLIN_PREFILL_WIDE"] = "0"
     assert run(leg) == 1
 
 
-def test_tp4_selector_mismatch_still_fails_tp4():
-    actual = {"VLLM_GLM5_TP4_MARLIN_PREFILL": "0", "VLLM_GLM5_PP_MARLIN_PREFILL": "1"}
-    expected = {"VLLM_GLM5_TP4_MARLIN_PREFILL": "1", "VLLM_GLM5_PP_MARLIN_PREFILL": "1"}
-    assert effective.compare_environment(actual, expected, {}, "", "tp4")
+def test_narrow_selector_mismatch_still_fails_tp4():
+    actual = {"VLLM_AMPERE_MARLIN_PREFILL_NARROW": "0", "VLLM_AMPERE_MARLIN_PREFILL_WIDE": "1"}
+    expected = {"VLLM_AMPERE_MARLIN_PREFILL_NARROW": "1", "VLLM_AMPERE_MARLIN_PREFILL_WIDE": "1"}
+    assert effective.compare_environment(actual, expected, {}, "tp4")

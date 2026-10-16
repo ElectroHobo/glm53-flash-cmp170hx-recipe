@@ -175,18 +175,32 @@ def test_cpu_mock_advertisement(cpu_probe, env, count, advertised):
     assert len(info["uuids"]) == count and info["advertised"] is advertised
 
 
+def dry_transports(tp, pp, **settings):
+    """The peer transports a dry run of serve.sh would give the server."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("NCCL_P2P_LEVEL", "NCCL_P2P_DISABLE", "VLLM_CUSTOM_ALLREDUCE_PCIE_P2P",
+                        "GLM5_NCCL_P2P_SYS", "LAYOUT", "EXTRA_ARGS", "SPEC_N")}
+    env.update(CUDA_VISIBLE_DEVICES="", DRY="1", VENV="/missing", TP=str(tp), PP=str(pp),
+               MODEL="/target", DFLASH_MODEL="/draft", VLLM_AMPERE_MARLIN_DECODE_CUDA="0")
+    env.update(settings)
+    run = subprocess.run(["bash", str(ROOT / "serve.sh")], text=True, capture_output=True, env=env)
+    assert run.returncode == 0, run.stderr
+    shown = dict(re.findall(r"^  ([A-Z][A-Z0-9_]*)=(.*)$", run.stdout, re.M))
+    return "RESULT:" + ",".join(shown.get(key, "unset") for key in (
+        "VLLM_CUSTOM_ALLREDUCE_PCIE_P2P", "NCCL_P2P_LEVEL", "NCCL_P2P_DISABLE"))
+
+
 @pytest.mark.parametrize("mode,enabled", [("off", False), ("auto", False), ("force", True)])
 @pytest.mark.parametrize("tp,pp", [(4, 1), (1, 4)])
 def test_shell_modes_and_nccl_safety(mode, enabled, tp, pp):
-    script = f'''VENV=/missing; REPO_ROOT={ROOT}; TP={tp}; PP={pp}; DRY=1
-source "$REPO_ROOT/p2p_check.sh"
-printf 'RESULT:%s,%s,%s' "$VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE" "${{NCCL_P2P_LEVEL-unset}}" "${{NCCL_P2P_DISABLE-unset}}"
-'''
-    run = subprocess.run(["bash", "-c", script], text=True, capture_output=True,
-                         env=dict(os.environ, CUDA_VISIBLE_DEVICES="", P2P=mode,
-                                  NCCL_P2P_LEVEL="SYS", NCCL_P2P_DISABLE="1"))
-    assert run.returncode == 0, run.stderr
-    assert ("RESULT:1,SYS,unset" if enabled else "RESULT:0,unset,1") in run.stdout
+    result = dry_transports(tp, pp, P2P=mode, NCCL_P2P_DISABLE="1")
+    if not enabled:
+        assert result == "RESULT:0,unset,1"
+    elif tp > 1:
+        assert result == "RESULT:1,SYS,unset"
+    else:
+        # TP=1 has no tensor-parallel all-reduce; NCCL carries the stage hand-off.
+        assert result == "RESULT:unset,SYS,unset"
 
 
 def test_container_forwarding_and_mounts(tmp_path):
@@ -229,16 +243,16 @@ esac
     server = venv / "bin/vllm"
     server.write_text('''#!/bin/bash
 echo server >> "$CALL_LOG"
-printf 'RESULT:%s,%s,%s' "$VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE" "${NCCL_P2P_LEVEL-unset}" "${NCCL_P2P_DISABLE-unset}"
+printf 'RESULT:%s,%s,%s' "$VLLM_CUSTOM_ALLREDUCE_PCIE_P2P" "${NCCL_P2P_LEVEL-unset}" "${NCCL_P2P_DISABLE-unset}"
 ''')
     python.chmod(0o755)
     server.chmod(0o755)
     run = subprocess.run(["bash", str(ROOT / "serve.sh")], text=True, capture_output=True,
                          env=dict(os.environ, CUDA_VISIBLE_DEVICES="", DRY="0", VENV=str(venv),
                                   MODEL="/target", DFLASH_MODEL="/draft", TP=str(tp), PP=str(pp),
-                                  VLLM_GLM5_MARLIN_DECODE_CUDA="0", VLLM_IMAGE_CACHE_SEED="0", BOOT_CHECK="0",
+                                  VLLM_AMPERE_MARLIN_DECODE_CUDA="0", VLLM_IMAGE_CACHE_SEED="0", BOOT_CHECK="0",
                                   P2P="auto", NCCL_P2P_LEVEL="SYS", NCCL_P2P_DISABLE="1",
-                                  VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE="1", CALL_LOG=str(log), CHECK_RESULT=enabled))
+                                  VLLM_CUSTOM_ALLREDUCE_PCIE_P2P="1", CALL_LOG=str(log), CHECK_RESULT=enabled))
     assert run.returncode == 0, run.stderr
     lines = log.read_text().splitlines()
     assert len(lines) == 2 and lines[0].startswith("check:") and lines[1] == "server"
@@ -251,18 +265,10 @@ printf 'RESULT:%s,%s,%s' "$VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE" "${NCCL_P2P_LEV
     ("", "0", "1", "RESULT:1,unset,unset"),
 ])
 def test_pass_keeps_explicit_transport_settings(level, sys_setting, custom, expected):
-    script = f'''VENV=/missing; REPO_ROOT={ROOT}; TP=4; PP=1; DRY=1
-source "$REPO_ROOT/p2p_check.sh"
-printf 'RESULT:%s,%s,%s' "$VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE" "${{NCCL_P2P_LEVEL-unset}}" "${{NCCL_P2P_DISABLE-unset}}"
-'''
-    env = dict(os.environ, CUDA_VISIBLE_DEVICES="", P2P="force", GLM5_NCCL_P2P_SYS=sys_setting,
-               VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE=custom)
+    settings = dict(P2P="force", GLM5_NCCL_P2P_SYS=sys_setting, VLLM_CUSTOM_ALLREDUCE_PCIE_P2P=custom)
     if level:
-        env["NCCL_P2P_LEVEL"] = level
-    else:
-        env.pop("NCCL_P2P_LEVEL", None)
-    run = subprocess.run(["bash", "-c", script], text=True, capture_output=True, env=env)
-    assert run.returncode == 0 and expected in run.stdout
+        settings["NCCL_P2P_LEVEL"] = level
+    assert dry_transports(4, 1, **settings) == expected
 
 
 def test_invalid_mode_rejected_before_cuda():

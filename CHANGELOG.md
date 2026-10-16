@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+- **Engine switches renamed for engine 819146023f; old names in `.env` are now
+  ignored.** `serve.sh` sets the release defaults under the engine's new names,
+  passes the adaptive draft depth as `--speculative-config` `adaptive_k` and
+  batch-sharded sampling as `--enable-batch-sharded-sampling`, and its effective
+  launch equals the validated one. If your `.env` (or `docker/container.env`)
+  sets an old name, the engine ignores it and logs `... is retired and ignored`
+  once at startup; rename the line:
+  `VLLM_GLM5_DECODE_KERNELS` → `VLLM_AMPERE_DECODE_KERNELS`,
+  `VLLM_GLM5_DECODE_IDX_GLUE` → `VLLM_AMPERE_DECODE_IDX_GLUE`,
+  `VLLM_GLM5_DECODE_MOE_ROUTE_V2` → `VLLM_MOE_DECODE_ROUTE_V2`,
+  `VLLM_GLM5_DETERMINISTIC_MOE_ALIGN` → `VLLM_MOE_DETERMINISTIC_ALIGN`,
+  `VLLM_GLM5_MOE_MASK_PADDING` → `VLLM_MOE_MASK_PADDING`,
+  `VLLM_GLM5_THIN_GEMM` → `VLLM_THIN_GEMM`,
+  `VLLM_GLM5_HOST_ALLREDUCE` → `VLLM_HOST_ALLREDUCE`,
+  `VLLM_GLM5_SHARED_EXPERT_REORDER` → `VLLM_SHARED_EXPERT_REORDER`,
+  `VLLM_GLM5_FLA_PIN_AUTOTUNE` → `VLLM_FLA_PIN_AUTOTUNE`,
+  `VLLM_GLM5_INDEXER_DECODE_RAW_K` → `VLLM_INDEXER_DECODE_RAW_K`,
+  `VLLM_GLM5_TOOL_CHOICE_NONE_MASK` → `VLLM_TOOL_CHOICE_NONE_MASK`,
+  `VLLM_GLM5_DFLASH_BOUNDARY_CACHE` → `VLLM_DFLASH_BOUNDARY_CACHE`,
+  `VLLM_GLM5_MARLIN_DECODE_CUDA` → `VLLM_AMPERE_MARLIN_DECODE_CUDA`,
+  `VLLM_GLM5_TP4_KDA_PREFILL` → `VLLM_AMPERE_KDA_PREFILL_NARROW`,
+  `VLLM_GLM5_TP4_MARLIN_PREFILL` → `VLLM_AMPERE_MARLIN_PREFILL_NARROW`,
+  `VLLM_GLM5_PP_KDA_PREFILL` → `VLLM_AMPERE_KDA_PREFILL_WIDE`,
+  `VLLM_GLM5_PP_SPARSE_MLA_PREFILL` → `VLLM_AMPERE_SPARSE_MLA_PREFILL_WIDE`,
+  `VLLM_GLM5_PP_MARLIN_PREFILL` → `VLLM_AMPERE_MARLIN_PREFILL_WIDE`,
+  `VLLM_GLM5_PP_MARLIN_PREFILL_COMPILED` → `VLLM_AMPERE_MARLIN_PREFILL_WIDE_COMPILED`,
+  `VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE` → `VLLM_CUSTOM_ALLREDUCE_PCIE_P2P`,
+  `VLLM_GLM5_STATE_INDEX_CHECK` → `VLLM_STATE_INDEX_CHECK`;
+  `VLLM_GLM5_LOCAL_LOGITS=0` → `EXTRA_ARGS=--no-enable-batch-sharded-sampling`;
+  `VLLM_GLM5_DFLASH_ADAPTIVE_K`, `_K_DEPTHS`, `_K_ACCEPT`, `_K_COSTS`,
+  `_K_COSTS_MULTI` and `VLLM_GLM5_DFLASH_ADAPTIVE_DRAFT_WIDTH` → your own
+  `--speculative-config` in `EXTRA_ARGS` (see
+  [Draft depth](docs/engine-switches.md#draft-depth)). Removed with no
+  replacement, and ignored the same way: `VLLM_GLM5_PREFILL_OVERLAP` and
+  `_SPLITS`, `VLLM_GLM5_MARLIN_DECODE_VARIANT` (one split-K order),
+  `VLLM_GLM5_INDEXER_DECODE_ROWS`, `VLLM_GLM5_INDEXER_GATHER_CLAMP`,
+  `VLLM_KV_SWA_INFLIGHT_SCRATCH`, `VLLM_GLM5_TP4_MARLIN_PREFILL_COMPILED`,
+  `VLLM_GLM5_THIN_GEMM_V74`, `VLLM_GLM5_DECODE_MHC_V3`,
+  `VLLM_GLM5_DECODE_MHC_V2_FN_BF16`, `VLLM_GLM5_PREFILL_PACK_BF16X2` and
+  `VLLM_CUSTOM_ALLREDUCE_FLAGS_BUILD_DIR`. `VLLM_GLM5_PROLOGUE_FUSE`,
+  `VLLM_GLM5_DECODE_KDA_V2`, `VLLM_GLM5_REPLICATED_EMBED` and
+  `VLLM_GLM5_SPARSE_MLA_DECODE_LEGACY` are no longer read, without a warning. The
+  full table is in [Engine switches](docs/engine-switches.md#renamed-and-retired-settings).
+  `SPEC_N` now applies to `mtp` only: with DFlash2 the depth comes from the
+  layout's adaptive mapping and `serve.sh` refuses `SPEC_N`. New in the
+  launcher, as validated: under TP4 the KDA commit fold, thin-GEMM concat
+  groups, small-stack KDA verify (`VLLM_AMPERE_KDA_FOLD`,
+  `VLLM_THIN_GEMM_CONCAT`, `VLLM_AMPERE_KDA_SMALL_STACK`) and compiled Marlin
+  decode v2 (`VLLM_AMPERE_MARLIN_DECODE_V2`). Under PP4 the custom all-reduce
+  switch is no longer exported (TP=1 has no tensor-parallel all-reduce), and
+  under TP4 `NCCL_P2P_LEVEL=SYS` follows the custom all-reduce switch.
 - **The engine image carries the validated compiled extensions.** The fork's own
   compiled extensions (optional Marlin and EXL3) are built once with
   `docker/native_build.py` and packed into the image by hash, the same files the

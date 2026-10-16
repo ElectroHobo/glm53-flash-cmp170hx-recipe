@@ -7,18 +7,19 @@ both layouts; changing layout never rebuilds it. The decode switch
 overrides the default explicitly:
 
 ```bash
-VLLM_GLM5_MARLIN_DECODE_CUDA=0 ./start.sh restart
+VLLM_AMPERE_MARLIN_DECODE_CUDA=0 ./start.sh restart
 ```
 
-Compiled decode has two reduction orders in the same library, chosen by
-`VLLM_GLM5_MARLIN_DECODE_VARIANT`. `orig` (the default) splits the first MoE
-projection four ways along K; it is faster, and because it adds in a different
-order the decoded text can differ from the released kernels, within their
-accuracy bounds. `exact` keeps the released summation order. The startup log
-names the active variant:
+Compiled decode uses one reduction order, which splits the first MoE
+projection four ways along K (the default `orig` order of earlier releases;
+the `VLLM_GLM5_MARLIN_DECODE_VARIANT` switch is retired). Because it adds in a
+different order from the released kernels, the decoded text can differ from
+them within their accuracy bounds. Under TP4 the decode v2 kernel
+(`VLLM_AMPERE_MARLIN_DECODE_V2`, default on with the compiled decode) replaces
+the first compiled decode kernel; PP4 keeps the first kernel:
 
 ```bash
-VLLM_GLM5_MARLIN_DECODE_VARIANT=exact ./start.sh restart
+VLLM_AMPERE_MARLIN_DECODE_V2=0 ./start.sh restart
 ```
 
 An explicit `0` or `1` in the environment or `.env` remains authoritative across
@@ -34,9 +35,9 @@ The compiled decode path is limited to eligible small batches in TP4 and PP4.
 Unsupported shapes use the released paths. This is not a universal kernel
 replacement, and no whole-server speedup is claimed here.
 
-The release includes TP4 compiled prefill tiles
-(`VLLM_GLM5_TP4_MARLIN_PREFILL_COMPILED`, default on) and PP4 compiled
-wide-tile prefill (`VLLM_GLM5_PP_MARLIN_PREFILL_COMPILED`, default on).
+The release includes PP4 compiled wide-tile prefill
+(`VLLM_AMPERE_MARLIN_PREFILL_WIDE_COMPILED`, on under PP4); the TP4 MoE prefill
+runs on the released Marlin kernels.
 Shapes outside their gates use the existing split paths. In 1.7.2, prefill
 work blocks start in dependency order to avoid stalls; use the matching
 engine pin and rebuilt library.

@@ -16,6 +16,11 @@ LAB_KEYS = {
     "SHLVL": "validation shell nesting",
     "USER": "validation login identity",
     "VLLM_SERVER_DEV_MODE": "validation server diagnostics",
+    "CUDA_VISIBLE_DEVICES": "validation GPU selection; the recipe serves on every visible card",
+    "LAB_MODEL": "validation model-profile selection",
+    "RAM_JOB_MARKER": "validation memory-lease bookkeeping",
+    "RAM_LEASE_TOKEN": "validation memory-lease bookkeeping",
+    "GLM5_SERVING_TREE": "validation launcher input; the engine is compared by its pinned commit",
     "GLM5_NCCL_P2P_SYS": "launcher input; NCCL_P2P_LEVEL is compared",
     "LAYOUT": "launcher input; parallel sizes are compared in the command",
     "MAX_LEN": "launcher input; max_model_len is compared in the command",
@@ -27,6 +32,8 @@ PATH_KEYS = {
     "CUDA_HOME", "DFLASH_MODEL", "FLASHINFER_WORKSPACE_BASE", "HOME",
     "MODEL", "PATH", "PWD", "PYTHONPATH", "VENV",
 }
+# Engine switch getters: upstream's table and the fork's own switches.
+ENV_FILES = ("vllm/envs.py", "vllm/sm80/envs.py")
 IGNORED_ARGS = {
     "model", "model_tag", "host", "port", "enable_prompt_tokens_details",
 }
@@ -205,8 +212,7 @@ def resolve_launcher_aliases(actual, expected, command, defaults):
         print("environment: FAIR_PREFILL resolved from both fair-prefill command arguments")
 
 
-
-def compare_environment(actual, expected, getters, source, layout):
+def compare_environment(actual, expected, getters, layout):
     failures = []
     matched = allowed = 0
     for key in sorted(set(actual) | set(expected)):
@@ -227,25 +233,23 @@ def compare_environment(actual, expected, getters, source, layout):
             reason = "installation, checkpoint, workspace, or executable search path"
         if key == "EXTRA_ARGS" and expected.get(key) == "--enable-prompt-tokens-details" and key not in actual:
             reason = "validation tokens-details flag; ignored in command comparison"
-        if key == "VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE" and layout == "pp4":
-            reason = "PP4 has TP=1 and no tensor-parallel all-reduce"
-        if (key == "VLLM_GLM5_TP4_MARLIN_PREFILL" and layout == "pp4"
+        if (key == "VLLM_AMPERE_MARLIN_PREFILL_NARROW" and layout == "pp4"
                 and key not in actual and expected.get(key) == "1"
-                and actual.get("VLLM_GLM5_PP_MARLIN_PREFILL") == "1"
-                and expected.get("VLLM_GLM5_PP_MARLIN_PREFILL") == "1"):
-            # The selector adds only intermediate N=512. PP whole experts
+                and actual.get("VLLM_AMPERE_MARLIN_PREFILL_WIDE") == "1"
+                and expected.get("VLLM_AMPERE_MARLIN_PREFILL_WIDE") == "1"):
+            # The narrow selector adds only intermediate N=512. PP whole experts
             # have N=2048; warmup uses intermediate_size / TP, not all entries.
             reason = ("PP4 whole experts use intermediate N=2048, not the TP4 selector's N=512; "
-                      f"vllm/ampere_prefill/pp_marlin_prefill.py:152-162,280-284,473-499 at {PIN[:10]}")
+                      f"vllm/sm80/kernels/marlin_moe/prefill.py:88-89,142-152,271-274,487 at {PIN[:10]}")
         # Missing exports can be equivalent only through the pinned fork getter.
         if reason is None and ((key in actual) != (key in expected)) and key in getters:
             value = actual[key] if key in actual else expected[key]
-            equal, default = default_equal(getters[key], key, value)
+            filename, source, getter = getters[key]
+            equal, default = default_equal(getter, key, value)
             if equal:
-                getter = getters[key]
                 expression = " ".join(ast.get_source_segment(source, getter).split())
                 proof = (f"explicit {value!r} equals fork default {default!r}; "
-                         f"vllm/envs.py:{getter.lineno} at {PIN[:10]}: {expression}")
+                         f"{filename}:{getter.lineno} at {PIN[:10]}: {expression}")
                 if key not in actual:
                     # A validation-only default equals the recipe's effective value.
                     print(f"environment: MATCH {key} ({proof}; recipe inherits default)")
@@ -265,8 +269,11 @@ def check_effective(root, path, layout, fork, serve_log=None):
     expected = json.loads(path.read_text())
     if not isinstance(expected, dict) or not all(isinstance(v, str) for v in expected.values()):
         raise ValueError("effective environment must be a complete string-valued JSON object")
-    source = git_source(fork, "vllm/envs.py")
-    getters = read_getters(source)
+    getters = {}
+    for filename in ENV_FILES:
+        source = git_source(fork, filename)
+        for key, getter in read_getters(source).items():
+            getters[key] = (filename, source, getter)
     defaults = read_command_defaults(fork)
     actual, command, stdout = dry_run(root, layout)
     logged = log_command(serve_log or path.with_name("serve.log"))
@@ -274,17 +281,14 @@ def check_effective(root, path, layout, fork, serve_log=None):
     if "MAX_BATCHED" in expected:
         actual["MAX_BATCHED"] = str(command["max_num_batched_tokens"])
         print("environment: MAX_BATCHED resolved from --max-num-batched-tokens")
-    if "GLM5_PP4_DRAFT_WIDTH" in expected:
-        actual["GLM5_PP4_DRAFT_WIDTH"] = actual["VLLM_GLM5_DFLASH_ADAPTIVE_DRAFT_WIDTH"]
-        print("environment: GLM5_PP4_DRAFT_WIDTH resolved from adaptive draft width")
     resolve_launcher_aliases(actual, expected, command, defaults)
     print(f"Full environment: layout={layout}; DRY=1; P2P=force; fork={PIN}")
     print("CPU fixture: optional Marlin module discoverable; no runtime imports")
     print("Capture excludes checker controls DRY/P2P/CUDA_VISIBLE_DEVICES and shell bookkeeping _")
     for line in stdout.splitlines():
-        if "[release-features] recover=" in line:
+        if "[release-features] all_reduce_flags=" in line:
             print(line)
-    failures = compare_environment(actual, expected, getters, source, layout)
+    failures = compare_environment(actual, expected, getters, layout)
     command_failures = compare_commands(command, logged, defaults)
     print(f"command: {len(command_failures)} mismatches (omitted defaults read from pinned config files)")
     failures.extend(command_failures)

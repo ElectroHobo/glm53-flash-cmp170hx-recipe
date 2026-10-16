@@ -98,7 +98,7 @@ For Docker, add build arguments `VLLM_REPO`, `VLLM_BRANCH`, `VLLM_COMMIT` naming
 a source reachable inside the build.
 The revision label identifies the supplied source. Both builders compile one
 sm_80 library without GPUs and check operator registrations. Image configuration
-leaves `VLLM_GLM5_MARLIN_DECODE_CUDA` unset.
+leaves `VLLM_AMPERE_MARLIN_DECODE_CUDA` unset.
 With the mounted `serve.sh`, TP4 and PP4 decode default on when
 installed. Explicit 0/1 values override the decode default. The bare `vllm`
 entry point retains engine-code defaults; the recipe's layout defaults require

@@ -28,7 +28,7 @@ body:
     id: p2p
     attributes:
       label: PCIe peer-to-peer
-      description: VLLM_ALLOW_PCIE_P2P_CUSTOM_ALLREDUCE
+      description: VLLM_CUSTOM_ALLREDUCE_PCIE_P2P
       options:
         - Off (0, default)
         - On (1)

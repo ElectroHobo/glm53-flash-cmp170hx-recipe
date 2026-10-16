@@ -37,7 +37,7 @@ def launcher_env(tmp_path):
            if not k.startswith('MM_') and k != 'EXTRA_ARGS'}
     env.update(VENV=str(tmp_path), PYTHONPATH=str(tmp_path),
                RECIPE_CACHE_ROOT=str(tmp_path / 'cache'), CUDA_VISIBLE_DEVICES='',
-               P2P='force', DRY='1', LAYOUT='tp4', VLLM_GLM5_MARLIN_DECODE_CUDA='0',
+               P2P='force', DRY='1', LAYOUT='tp4', VLLM_AMPERE_MARLIN_DECODE_CUDA='0',
                MODEL='/unused/target', DFLASH_MODEL='/unused/drafter')
     return env
 
