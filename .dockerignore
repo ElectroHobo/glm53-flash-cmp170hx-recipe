@@ -9,3 +9,5 @@
 !docker/bwrap_targets.py
 !docker/p2p_build.py
 !p2p_probe.cu
+!docker/native_build.py
+!docker/native/

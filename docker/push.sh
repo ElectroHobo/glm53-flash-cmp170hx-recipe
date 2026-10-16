@@ -2,13 +2,17 @@
 # Publish an already reviewed OCI image; the release token arrives on stdin.
 set -euo pipefail
 set +x
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 printf '[image-push] enabled=%s\n' "${IMAGE_PUBLISH:-0}" >&2
 [ "${IMAGE_PUBLISH:-0}" = 1 ] || { echo "Set IMAGE_PUBLISH=1 only for an approved release" >&2; exit 2; }
 [ "$#" = 4 ] || { echo "Usage: push.sh OCI TARGET EXPECTED_DIGEST GPU_ACCEPTANCE_JSON < token-file" >&2; exit 2; }
 oci="$1"; target="$2"; expected="$3"; acceptance="$4"
 case "$target" in ghcr.io/morrowmake/vllm-cmp170hx:*) ;; *) echo "Unexpected publication target" >&2; exit 2 ;; esac
-python3 - "$oci" "$expected" "$acceptance" <<'CHECK'
+python3 - "$oci" "$expected" "$acceptance" "$target" "$HERE" <<'CHECK'
 import hashlib, json, pathlib, sys
+sys.path.insert(0, sys.argv[5])
+from image_identity import check_config
+from oci_layers import read_blob
 root = pathlib.Path(sys.argv[1])
 expected = sys.argv[2]
 index = json.loads((root / "index.json").read_text())
@@ -21,7 +25,12 @@ for path in (root / "blobs/sha256").iterdir():
             h.update(b)
     if h.hexdigest() != path.name:
         raise SystemExit("OCI blob integrity mismatch")
+manifest = read_blob(root, index["manifests"][0])
+config = read_blob(root, manifest["config"])
+commit = check_config(config, sys.argv[4])
 record = json.loads(pathlib.Path(sys.argv[3]).read_text())
+if record.get("engine_commit") != commit:
+    raise SystemExit("GPU acceptance engine commit missing or mismatched")
 if record["image_digest"] != expected or record["passed"] is not True:
     raise SystemExit("GPU acceptance missing or mismatched")
 if record["artifact_audit_passed"] is not True:

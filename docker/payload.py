@@ -38,7 +38,7 @@ def partition(path):
     if parts[0] != "venv":
         raise ValueError("Unexpected runtime payload root")
     if (any(p.startswith(("vllm-", "__editable__.vllm", "__editable___vllm")) for p in parts)
-            or path.name in ("vllm", ".ampere-marlin-image-stamp")):
+            or path.name in ("vllm", ".native-manifest.json")):
         return "engine"
     return "dependencies"
 

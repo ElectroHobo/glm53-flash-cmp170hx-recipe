@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-PIN = "ab60b723ada254a442a4ba5ff27bf837aa27ef83"
+PIN = "819146023facb31c04f1f8512e52464835a10d40"
 LAB_KEYS = {
     "GPU_LOCK_TOKENS": "validation GPU lock ownership",
     "LANG": "validation shell locale",

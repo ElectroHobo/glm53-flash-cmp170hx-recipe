@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from image_identity import engine_tag
 from layer_count import check as check_layer_count
 
 OCI = "application/vnd.oci.image."
@@ -60,7 +61,9 @@ def pack(root, name, work, parallel, threads):
     tar.unlink()
     return name, zipped, descriptor, diff, size
 
-def assemble(base, payload, out, pin, release, layered=True, parallel=True, threads=16):
+def assemble(base, payload, out, pin, tag, layered=True, parallel=True, threads=16):
+    if tag != engine_tag(pin):
+        raise ValueError("Image tag differs from the full engine revision")
     manifest, config = image(base)
     if config["os"] != "linux" or config["architecture"] != "amd64":
         raise ValueError("Base must be linux/amd64")
@@ -104,7 +107,7 @@ def assemble(base, payload, out, pin, release, layered=True, parallel=True, thre
     config["config"].update(Env=[k + "=" + v for k, v in sorted(env.items())],
                             Entrypoint=["/opt/venv/bin/vllm"], ExposedPorts={"8000/tcp": {}})
     labels = config["config"].setdefault("Labels", {})
-    labels.update({"org.opencontainers.image.revision": pin, "org.opencontainers.image.version": release,
+    labels.update({"org.opencontainers.image.revision": pin, "org.opencontainers.image.version": tag,
                    "org.opencontainers.image.title": "vllm-cmp170hx",
                    "org.opencontainers.image.base.name": "docker.io/nvidia/cuda:13.3.1-devel-ubuntu24.04",
                    "org.opencontainers.image.base.digest": "sha256:4ff859525f99de5782aa73607ce24219b07dddd48d12b97c1c301d7e1cfb0a87",
@@ -128,9 +131,9 @@ if __name__ == "__main__":
     for name in ("base", "payload", "out"):
         p.add_argument(name, type=Path)
     p.add_argument("pin")
-    p.add_argument("release")
+    p.add_argument("tag")
     a = p.parse_args()
-    print(assemble(a.base, a.payload, a.out, a.pin, a.release,
+    print(assemble(a.base, a.payload, a.out, a.pin, a.tag,
                    layered=os.environ.get("IMAGE_LAYERED", "1") == "1",
                    parallel=os.environ.get("IMAGE_PARALLEL_COMPRESSION", "1") == "1",
                    threads=int(os.environ.get("IMAGE_COMPRESSION_THREADS", "16"))))

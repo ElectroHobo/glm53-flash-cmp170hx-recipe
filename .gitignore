@@ -18,4 +18,6 @@ __pycache__/
 
 # Container: image build output (docker/build.sh) and compile caches
 docker/out/
+# Native extension files from docker/native_build.py, packed by the Dockerfile
+docker/native/
 cache/

@@ -142,7 +142,7 @@ load_env_defaults "$SCRIPT_DIR/.env"
 # This release's engine: the fork commit the container image is built from,
 # and that image, pinned by digest (docker-compose.yml runs the same image).
 # The image pin below awaits validation.
-RELEASE_VLLM_COMMIT=ab60b723ada254a442a4ba5ff27bf837aa27ef83
+RELEASE_VLLM_COMMIT=819146023facb31c04f1f8512e52464835a10d40
 RELEASE_IMAGE=ghcr.io/morrowmake/vllm-cmp170hx@sha256:0d249835cb8502316403350a3cad9d531b46e5249e4076ecb70faa42067b5b7a
 IMAGE="${IMAGE:-$RELEASE_IMAGE}"
 MODELS_DIR="${MODELS_DIR:-$SCRIPT_DIR/models}"

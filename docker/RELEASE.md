@@ -11,7 +11,14 @@ wheel-download hashes and a bit-for-bit compiler result are separate checks.
 
 The layers are Python, dependencies, native engine libraries, editable engine
 source/metadata, and optionally a compilation-cache seed. Engine metadata,
-editable finders and the Marlin commit stamp belong to the engine layer.
+editable finders and the native manifest (`/opt/venv/.native-manifest.json`)
+belong to the engine layer. Our compiled extensions are not compiled by either
+builder: `native_build.py build` makes them once in the pinned base image,
+native validation installs exactly those files (`native_build.py install`),
+and the release pins the resulting manifest's sha256 in `build.sh`
+(`RELEASE_NATIVE_MANIFEST_SHA256`) and the `Dockerfile` (`NATIVE_MANIFEST_SHA256`).
+`build.sh` packs them from `NATIVE_DIR` and finishes with `native_build.py
+check-oci` against the assembled image.
 Native libraries reuse a layer only when their bytes are identical; a Python
 release never reuses native bytes solely on the basis of a branch name.
 `layers.json` records every compressed size and digest. `IMAGE_LAYERED=1` and

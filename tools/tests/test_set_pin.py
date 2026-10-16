@@ -19,6 +19,7 @@ def scratch(tmp_path):
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / name, dest)
     (tmp_path / "extra.md").write_text("another current reference " + CURRENT_PIN)
+    (tmp_path / "short.md").write_text("engine-" + CURRENT_PIN[:10])
     subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
     return tmp_path
 
@@ -43,6 +44,9 @@ def test_moves_every_reference_and_preserves_history(scratch):
             text = (scratch / name).read_text()
             assert SLOT not in text and pin in text
             assert name + ":" in result.stdout
+        assert (scratch / "short.md").read_text() == "engine-" + pin[:10]
+        assert re.search(r"^ARG IMAGE_TAG=engine-" + pin[:10] + r"$",
+                         (scratch / "docker/Dockerfile").read_text(), re.M)
         assert (scratch / "CHANGELOG.md").read_text().split("## 1.6.0", 1)[1] == history
     assert run(scratch, "b" * 40).returncode == 0
 

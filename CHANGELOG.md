@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **The engine image carries the validated compiled extensions.** The fork's own
+  compiled extensions (optional Marlin and EXL3) are built once with
+  `docker/native_build.py` and packed into the image by hash, the same files the
+  release validation ran, instead of being compiled again during the image build.
+  Image tags now name the engine source (`engine-<commit>`), independent of recipe
+  release numbers. Seed: no (the image carries no compilation-cache seed; the first
+  start compiles its kernels).
 - **One command from a fresh clone: `./start.sh` or `docker compose up`.** Plain
   `docker compose up` now does the whole first start: a `prepare` service
   runs first, makes `./cache` and the model directory writable by the serving user,

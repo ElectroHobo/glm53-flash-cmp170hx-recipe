@@ -41,7 +41,7 @@ Shapes outside their gates use the existing split paths. In 1.7.2, prefill
 work blocks start in dependency order to avoid stalls; use the matching
 engine pin and rebuilt library.
 The old `VLLM_GLM5_MARLIN_PREFILL_CUDA` switch is ignored. The compiled library
-is rebuilt from `ab60b723ada254a442a4ba5ff27bf837aa27ef83`; decode entry points retain their established outputs.
+is rebuilt from `819146023facb31c04f1f8512e52464835a10d40`; decode entry points retain their established outputs.
 The published [Results](results.md) remain the 1.7.0 measurements until
 1.7.2 validation is complete.
 

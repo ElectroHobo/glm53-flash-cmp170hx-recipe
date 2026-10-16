@@ -7,15 +7,12 @@ image, how to build it, and how to run it by hand with `docker run`.
 
 ## What the image contains
 
-- **Engine:** the [vLLM fork](https://github.com/Morrowmake/vllm-cmp170hx/tree/ab60b723ada254a442a4ba5ff27bf837aa27ef83)
-  pinned at `ab60b723ada254a442a4ba5ff27bf837aa27ef83` (1.7.2, on upstream `e55d076f89`), installed
-  as an editable install: Python 3.12, torch 2.13.0 (CUDA 13.0
-  build), the fork installed editable in `/opt/venv` with upstream's
-  precompiled extensions, then the runtime extras the engine pins (FlashInfer
-  0.7.0, humming-kernels 0.1.16, TileLang). The base `e55d076f89` has no nightly
-  wheel of its own, so the extensions come from upstream `b6761e8ded`'s wheel,
-  whose C++, CUDA and Rust sources are identical. The installed package list
-  is in `/opt/venv/requirements.lock.txt`.
+- **Engine:** the [vLLM fork](https://github.com/Morrowmake/vllm-cmp170hx/tree/819146023facb31c04f1f8512e52464835a10d40)
+  pinned at `819146023facb31c04f1f8512e52464835a10d40`, on upstream `4e0681ed56`, installed
+  editable in `/opt/venv` (Python 3.12, torch 2.13.0, CUDA 13.0 build) with the
+  upstream compiled extensions from `4e0681ed56`'s own nightly wheel, then the
+  runtime extras the engine pins. The installed package list is in
+  `/opt/venv/requirements.lock.txt`.
 - **Optional Marlin:** a distinct compiled CUDA/C++ library, included for both
   layouts without replacing the upstream base extensions.
 - **Base:** `nvidia/cuda:13.3.1-devel-ubuntu24.04`, pinned by digest. It is the
@@ -30,29 +27,44 @@ image, how to build it, and how to run it by hand with `docker run`.
   The startup banner reports build, identity and check time, with transport,
   ordered-pair and size breakdowns on an uncached check. Content verification
   remains cached by driver, ordered GPU UUIDs, source hash and host boot.
-- **Seed mount:** `/opt/cache-seed` exists even when no seed is included.
+- **No compilation-cache seed.** This image carries none (`/opt/cache-seed` is
+  empty), so the first start compiles its kernels into the cache mount.
 - **No weights.** The two checkpoints are mounted from the host.
 
-Release 1.7.2 image tag (digest pending validation):
+Engine image tag:
 
 ```
-ghcr.io/morrowmake/vllm-cmp170hx:1.7.2-ab60b723ad
+ghcr.io/morrowmake/vllm-cmp170hx:engine-819146023f
 ```
 
-Its OCI revision is `ab60b723ada254a442a4ba5ff27bf837aa27ef83`. The rootless version is `1.7.2-` plus the
-first ten commit characters; the Docker builder labels the version `1.7.2`.
+The OCI revision is `819146023facb31c04f1f8512e52464835a10d40`.
+Image tags identify engine source, independently of recipe release numbers.
+Publication requires validation and acceptance of the exact image digest.
 
 ## Build it
 
-**Optional Marlin:** both builders use the release engine pin, which includes
-`csrc/libtorch_stable/moe/ampere_marlin/build_standalone.py`. Missing support
-fails the build rather than omitting the library. To build from another local
-source, supply its full commit and branch explicitly:
+**Optional Marlin and the fork's other compiled extensions** are built once,
+before the image, by `docker/native_build.py` inside the pinned CUDA base image
+(rootless, with bubblewrap; fixed paths). Native validation runs those exact
+files, and both builders pack them by hash; neither compiles them.
+`RELEASE_NATIVE_MANIFEST_SHA256` in `build.sh` (and `NATIVE_MANIFEST_SHA256` in
+the `Dockerfile`) pins the validated `manifest.json`; a different build, commit
+or toolchain fails the image build.
 
 ```bash
-VLLM_COMMIT=<full-engine-commit> CLONE_FROM=/path/to/source CLONE_BRANCH=<source-branch> \
-  STAGE=/path/to/new-owned-staging-directory ./docker/build.sh
+crane pull --platform linux/amd64 --format oci \
+  nvidia/cuda:13.3.1-devel-ubuntu24.04@sha256:4ff859525f99de5782aa73607ce24219b07dddd48d12b97c1c301d7e1cfb0a87 /path/to/base-oci
+python3 docker/native_build.py build --repo /path/to/fork-clone --commit <full-engine-commit> \
+  --base-oci /path/to/base-oci --work /path/to/new-scratch --out /path/to/native --uv "$(command -v uv)"
+NATIVE_DIR=/path/to/native VLLM_COMMIT=<full-engine-commit> CLONE_FROM=/path/to/source \
+  CLONE_BRANCH=<source-branch> STAGE=/path/to/new-owned-staging-directory ./docker/build.sh
 ```
+
+`manifest.json` records the source commit and input trees, the base image and
+compiler digests, torch and its library hashes, the flags and each file's
+sha256; it names no host path. For the Docker path, copy the output directory
+to `docker/native/`. `build.sh` ends by checking that the assembled OCI image
+holds exactly the manifest's files (`native-check.json`).
 
 Both builders precompile the peer probe without using a GPU. To omit it, set
 `IMAGE_P2P_PREBUILD=0` for the rootless builder or pass
@@ -97,7 +109,7 @@ existing toolkit. Validate real-image startup before selecting a new `IMAGE` pin
 Build the release source with Docker:
 
 ```bash
-bash docker/build-docker.sh vllm-cmp170hx:1.7.2-ab60b723ad
+bash docker/build-docker.sh vllm-cmp170hx:engine-819146023f
 ```
 
 Both build paths print the total filesystem layer count, including the base,
@@ -138,7 +150,7 @@ You need:
 From the root of this repository:
 
 ```bash
-IMAGE=ghcr.io/morrowmake/vllm-cmp170hx:1.7.2-ab60b723ad
+IMAGE=ghcr.io/morrowmake/vllm-cmp170hx:engine-819146023f
 MODELS=$PWD/models                  # holds GLM-5.3-Flash-W4A16-MTP and GLM-5.3-Flash-DFlash2
 CACHE=$PWD/cache                    # kernel compile caches, kept between starts
 mkdir -p "$CACHE"
@@ -182,8 +194,7 @@ The server runs as you (`--user`), not root: Triton, FlashInfer, TileLang,
 torch and vLLM write their compile caches under the cache mount (`HOME=/cache`
 and the cache paths in `container.env`), so `./cache` stays yours. The first
 start compiles kernels there and takes several minutes; later starts reuse
-them. Optional device-specific seeds are described in the
-[release procedure](RELEASE.md); `VLLM_IMAGE_CACHE_SEED=0` disables them. Stop it with `docker stop -t 120 glm53-flash`
+them. Stop it with `docker stop -t 120 glm53-flash`
 and wait until `nvidia-smi` shows the cards empty before starting again. The
 API is the same as always ([Talk to it](../docs/how-to-use.md#talk-to-it)).
 

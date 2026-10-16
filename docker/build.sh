@@ -6,6 +6,9 @@
 # BASE_OCI permits assembly from a retained local base without registry access.
 # IMAGE_LAYERED=0 keeps one runtime layer; IMAGE_PARALLEL_COMPRESSION=0 uses gzip.
 # IMAGE_CACHE_SEED_DIR optionally supplies a GPU-generated, matching cache bundle.
+# NATIVE_DIR is native_build.py's output for VLLM_COMMIT (our compiled extensions,
+# built once in BASE and validated natively from those exact files); the image
+# packs them by hash and never compiles them. NATIVE_MANIFEST_SHA256 overrides the pin.
 set -euo pipefail
 umask 022
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,21 +20,23 @@ OUT="${OUT:-$HERE/out}"
 BASE="nvidia/cuda:13.3.1-devel-ubuntu24.04@sha256:4ff859525f99de5782aa73607ce24219b07dddd48d12b97c1c301d7e1cfb0a87"
 VLLM_REPO="https://github.com/Morrowmake/vllm-cmp170hx.git"
 VLLM_BRANCH="${VLLM_BRANCH:-ampere}"
-RELEASE_VLLM_COMMIT='ab60b723ada254a442a4ba5ff27bf837aa27ef83'
+RELEASE_VLLM_COMMIT='819146023facb31c04f1f8512e52464835a10d40'
 VLLM_COMMIT="${VLLM_COMMIT:-$RELEASE_VLLM_COMMIT}"
-# Upstream nightly wheel for the extensions: the pin's base e55d076f89 has no
-# wheel; b6761e8ded's C++, CUDA and Rust sources are identical to it.
-VLLM_WHEEL_COMMIT="b6761e8ded57ef85b708f34af8cab1649eae1069"
-RELEASE="${RELEASE:-1.7.2}"
+# Upstream compiled extensions: the nightly wheel of the pin's upstream base
+# 4e0681ed56 itself. Our own extensions come from NATIVE_DIR (above).
+VLLM_WHEEL_COMMIT="4e0681ed5654c1d8afb3c104d4381afd08529de8"
 # Upstream release tag the pin's base descends from (sets the version string).
-VERSION_TAG="v0.30.1rc0"
+VERSION_TAG="v0.32.0rc0"
+# sha256 of the validated native_build.py manifest.json for RELEASE_VLLM_COMMIT.
+RELEASE_NATIVE_MANIFEST_SHA256='201963595ae5035ae09f31418d650a66cbe09b854ae1de8110ec1d1984f5be26'
+NATIVE_MANIFEST_SHA256="${NATIVE_MANIFEST_SHA256:-$RELEASE_NATIVE_MANIFEST_SHA256}"
 UPSTREAM_REPO="https://github.com/vllm-project/vllm.git"
 PYTHON_VERSION="3.12"
 PYTHON_INSTALL_VERSION="3.12.14"
 CONSTRAINTS="${CONSTRAINTS:-$HERE/CONSTRAINTS}"
 export UV_CONSTRAINT="$CONSTRAINTS" CUDA_VISIBLE_DEVICES=""
 log_features() { printf "[image] layered=%s parallel_compression=%s cache_seed=%s\n" "${IMAGE_LAYERED:-1}" "${IMAGE_PARALLEL_COMPRESSION:-1}" "$([ -n "${IMAGE_CACHE_SEED_DIR:-}" ] && echo included || echo disabled)"; }
-TAG="$RELEASE-${VLLM_COMMIT:0:10}"
+TAG="$(python3 "$HERE/image_identity.py" tag "$VLLM_COMMIT")"
 PIP=(--extra-index-url https://flashinfer.ai/whl/)
 export UV_LINK_MODE=copy PYTHONDONTWRITEBYTECODE=1 UV_NO_CONFIG=1
 # git records an identity in reflogs; keep the image free of the builder's
@@ -40,6 +45,10 @@ export GIT_COMMITTER_NAME=Morrowmake GIT_COMMITTER_EMAIL=noreply@github.com
 export GIT_CONFIG_GLOBAL=/dev/null
 mkdir -p "$OUT"
 log() { printf '[%s] %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
+require_native() {
+    [ -n "$NATIVE_MANIFEST_SHA256" ] || { echo "No validated native manifest pinned (RELEASE_NATIVE_MANIFEST_SHA256 or NATIVE_MANIFEST_SHA256)" >&2; exit 1; }
+    [ -f "${NATIVE_DIR:-}/manifest.json" ] || { echo "Set NATIVE_DIR to the output of: python3 docker/native_build.py build --repo <fork clone> --commit $VLLM_COMMIT --base-oci <crane pull of BASE> --work <new dir> --out <new dir>" >&2; exit 1; }
+}
 
 clone_source() {
     log "engine source @ $VLLM_COMMIT"
@@ -96,14 +105,12 @@ from payload import check_lock
 check_lock(Path(sys.argv[1]), Path(sys.argv[2]))
 LOCK
 
-    log "optional Marlin (sm_80, both layouts; no GPU)"
-    local builder="$STAGE/opt/vllm-src/csrc/libtorch_stable/moe/ampere_marlin/build_standalone.py"
-    [ -f "$builder" ] || { echo "This image build requires an engine with optional Marlin support; set VLLM_COMMIT, CLONE_FROM and CLONE_BRANCH to a compatible source." >&2; exit 1; }
-    ( cd "$STAGE/opt/vllm-src" && CUDA_VISIBLE_DEVICES= VLLM_BUILD_AMPERE_MARLIN=1 \
-        CUDA_HOME="$BUILD_CUDA_HOME" PATH="$STAGE/opt/venv/bin:$BUILD_CUDA_HOME/bin:$PATH" \
-        "$STAGE/opt/venv/bin/python" "$builder" --out "$STAGE/opt/vllm-src/vllm" \
-        --build-dir "$STAGE/ampere-marlin-build" )
+    log "our compiled extensions (packed by hash from NATIVE_DIR; not compiled here)"
+    require_native
+    python3 "$HERE/native_build.py" pack --native "$NATIVE_DIR" --venv-check \
+        --manifest-sha256 "$NATIVE_MANIFEST_SHA256" --commit "$VLLM_COMMIT" --opt "$STAGE/opt"
     log "verify imports (no GPU)"
+    NATIVE_MANIFEST_SHIPPED="$STAGE/opt/venv/.native-manifest.json" \
     CUDA_VISIBLE_DEVICES= "$STAGE/opt/venv/bin/python" - <<'PY' | tee "$OUT/verify.txt"
 import importlib, sys, torch
 print(f"python      {sys.version.split()[0]}")
@@ -116,13 +123,16 @@ for mod in ("triton", "tilelang", "flashinfer", "humming"):
     print(f"{mod:<11} {getattr(m, '__version__', 'ok')}")
 from vllm.v1.attention.backends.mla import triton_mla_sparse            # noqa: F401
 from vllm.v1.attention.ops import triton_mqa_logits, triton_e4m3        # noqa: F401
-from vllm.v1.worker.gpu import prologue_fuse                            # noqa: F401
 from vllm.distributed.device_communicators import host_shm_all_reduce   # noqa: F401
-from vllm.ampere_marlin import require_extension
-require_extension()
-print("sm_80 patch modules and optional Marlin registrations ok")
+import json, os
+artefacts = json.load(open(os.environ["NATIVE_MANIFEST_SHIPPED"]))["artefacts"]
+if "vllm/_ampere_marlin_C.abi3.so" in artefacts:
+    from vllm.ampere_marlin import require_extension
+    require_extension()
+    print("sm_80 patch modules and optional Marlin registrations ok")
+else:
+    print("sm_80 patch modules ok; optional Marlin not shipped")
 PY
-    { printf '%s\n' "$VLLM_COMMIT"; sha256sum "$STAGE/opt/vllm-src/vllm/_ampere_marlin_C.abi3.so" | cut -d' ' -f1; } > "$STAGE/opt/venv/.ampere-marlin-image-stamp"
     unset VIRTUAL_ENV
 }
 
@@ -156,11 +166,12 @@ finalize_tree() {
         --forbid "$HOME/" --forbid "$STAGE/"
 }
 
+check_native_tree() {
+    python3 "$HERE/native_build.py" check-tree --manifest "$STAGE/opt/venv/.native-manifest.json" \
+        --manifest-sha256 "$NATIVE_MANIFEST_SHA256" --commit "$VLLM_COMMIT" --tree "$STAGE/opt/vllm-src"
+}
 layer() {
-    local expected actual
-    expected="$(cat "$STAGE/opt/venv/.ampere-marlin-image-stamp")"
-    actual="$(printf '%s\n' "$VLLM_COMMIT"; sha256sum "$STAGE/opt/vllm-src/vllm/_ampere_marlin_C.abi3.so" | cut -d' ' -f1)"
-    [ "$actual" = "$expected" ] || { echo "Optional Marlin image stamp mismatch" >&2; exit 1; }
+    check_native_tree
     python3 "$HERE/runtime_tree.py" check "$STAGE/opt" "$VLLM_COMMIT" --forbid "$HOME/" --forbid "$STAGE/"
     [ ! -e "$OUT/payload" ] || { echo "Choose a new OUT (payload already exists)" >&2; exit 1; }
     python3 "$HERE/payload.py" "$STAGE/opt" "$OUT/payload" "$CONSTRAINTS"
@@ -186,6 +197,8 @@ assemble() {
         "$CRANE" pull --platform linux/amd64 --format oci "$BASE" "$base_oci"
     fi
     python3 "$HERE/oci_layers.py" "$base_oci" "$OUT/payload" "$OUT/oci" "$VLLM_COMMIT" "$TAG"
+    python3 "$HERE/native_build.py" check-oci --oci "$OUT/oci" --require-shipped-manifest \
+        --manifest "$STAGE/opt/venv/.native-manifest.json" | tee "$OUT/native-check.json"
     log "local OCI complete (not pushed)"
 }
 

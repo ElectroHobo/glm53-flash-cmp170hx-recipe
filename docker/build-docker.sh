@@ -8,5 +8,6 @@ case "${IMAGE_LAYER_COUNT_CHECK:-1}" in
   0|1) ;;
   *) echo '[image-layers] FAIL: IMAGE_LAYER_COUNT_CHECK must be 0 or 1' >&2; exit 2 ;;
 esac
-docker build -f "$HERE/Dockerfile" -t "$IMAGE" "$@" "$HERE/.."
-docker image inspect "$IMAGE" | python3 "$HERE/layer_count.py"
+TAG="$(python3 "$HERE/image_identity.py" target "$IMAGE")"
+docker build -f "$HERE/Dockerfile" -t "$IMAGE" "$@" --build-arg "IMAGE_TAG=$TAG" "$HERE/.."
+docker image inspect "$IMAGE" | python3 "$HERE/image_identity.py" inspect "$IMAGE"

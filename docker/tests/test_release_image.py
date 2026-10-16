@@ -20,7 +20,7 @@ def test_partition():
              "venv/lib/site-packages/vllm-1.dist-info/METADATA": "engine",
              "venv/lib/site-packages/__editable__.vllm-1.pth": "engine",
              "venv/lib/site-packages/__editable___vllm_1_finder.py": "engine",
-             "venv/.ampere-marlin-image-stamp": "engine", "venv/bin/vllm": "engine",
+             "venv/.native-manifest.json": "engine", "venv/bin/vllm": "engine",
              "vllm-src/vllm/x.py": "engine", "vllm-src/vllm/x.abi3.so": "native"}
     for path, part in cases.items():
         assert payload.partition(Path(path)) == part
@@ -114,6 +114,18 @@ def base(tmp_path):
     (b / "index.json").write_text(json.dumps(dict(manifests=[md])))
     return b
 
+
+def publication_image(tmp_path, labels=None):
+    root = base(tmp_path)
+    manifest, config = oci.image(root)
+    config["config"]["Labels"] = labels if labels is not None else {
+        "org.opencontainers.image.revision": PIN,
+        "org.opencontainers.image.version": "engine-" + PIN[:10]}
+    manifest["config"] = oci.put(root, oci.encoded(config), oci.OCI + "config.v1+json")
+    desc = oci.put(root, oci.encoded(manifest), manifest["mediaType"])
+    (root / "index.json").write_text(json.dumps(dict(manifests=[desc])))
+    return root
+
 def test_layer_reuse_and_reproducibility(tmp_path):
     b = base(tmp_path)
     p = tmp_path / "payload"
@@ -126,7 +138,7 @@ def test_layer_reuse_and_reproducibility(tmp_path):
         out = tmp_path / str(n) / "oci"
         if n == 2:
             (p / "engine/opt/engine/file").write_text("changed Python")
-        oci.assemble(b, p, out, PIN if n < 2 else "b"*40, "test", threads=2)
+        oci.assemble(b, p, out, PIN if n < 2 else "b"*40, "engine-" + (PIN if n < 2 else "b"*40)[:10], threads=2)
         reports.append(json.loads((out.parent / "layers.json").read_text()))
     assert reports[0] == reports[1]
     assert reports[0][:3] == reports[2][:3]
@@ -146,7 +158,7 @@ def test_kill_switches(tmp_path):
         d = p / name
         d.mkdir(parents=True)
         (d / name).write_text(name)
-    oci.assemble(b, p, tmp_path / "out/oci", PIN, "test", layered=False, parallel=False)
+    oci.assemble(b, p, tmp_path / "out/oci", PIN, "engine-" + PIN[:10], layered=False, parallel=False)
     m, c = oci.image(tmp_path / "out/oci")
     assert len(m["layers"]) == 1
 
@@ -154,17 +166,17 @@ def test_kill_switches(tmp_path):
 def test_push_guards_and_private_auth(tmp_path):
     import os
     import subprocess
-    b = base(tmp_path)
+    b = publication_image(tmp_path)
     digest = json.loads((b/"index.json").read_text())["manifests"][0]["digest"]
     record = tmp_path/"acceptance.json"
-    record.write_text(json.dumps(dict(image_digest=digest, passed=True, artifact_audit_passed=True)))
+    record.write_text(json.dumps(dict(image_digest=digest, engine_commit=PIN, passed=True, artifact_audit_passed=True)))
     log = tmp_path/"calls"
     fake = tmp_path/"crane"
     fake.write_text("#!/bin/bash\nset -eu\nprintf '%s\\n' \"$*\" >> \"$CALL_LOG\"\ncase \"$1\" in\n auth) cat >/dev/null; echo \"$DOCKER_CONFIG\" > \"$CONFIG_LOG\" ;;\n push) ;;\n digest) echo \"$EXPECTED\" ;;\nesac\n")
     fake.chmod(0o755)
     env = dict(os.environ, CUDA_VISIBLE_DEVICES="", CRANE=str(fake), CALL_LOG=str(log),
                CONFIG_LOG=str(tmp_path/"config-path"), EXPECTED=digest)
-    argv = ["bash", str(ROOT/"push.sh"), str(b), "ghcr.io/morrowmake/vllm-cmp170hx:test", digest, str(record)]
+    argv = ["bash", str(ROOT/"push.sh"), str(b), "ghcr.io/morrowmake/vllm-cmp170hx:engine-aaaaaaaaaa", digest, str(record)]
     assert subprocess.run(argv, env=env, input="", text=True, capture_output=True).returncode == 2
     assert not log.exists()
     env["IMAGE_PUBLISH"] = "1"
@@ -182,9 +194,10 @@ def test_push_guards_and_private_auth(tmp_path):
 def test_launcher_dry_no_cuda(tmp_path, enabled):
     import os
     import subprocess
+    import sys
     env = dict(os.environ, CUDA_VISIBLE_DEVICES="", DRY="1", VLLM_IMAGE_CACHE_SEED=enabled,
                VLLM_GLM5_MARLIN_DECODE_CUDA="0",
-               VENV=str(tmp_path/"missing"), MODEL=str(tmp_path/"target"), DFLASH_MODEL=str(tmp_path/"draft"))
+               VENV=sys.prefix, MODEL=str(tmp_path/"target"), DFLASH_MODEL=str(tmp_path/"draft"))
     result = subprocess.run(["bash", str(ROOT.parent/"serve.sh")], env=env, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     assert ("[image-cache] disabled" if enabled == "0" else "[image-cache] enabled (dry run)") in result.stdout
@@ -325,7 +338,7 @@ def test_audit_tmp_tar_entry(tmp_path, layered, mode, uid, gid, passed):
     (p / 'engine/tmp').mkdir()
     (p / 'engine/tmp').chmod(0o1777)
     out = tmp_path / 'out/oci'
-    oci.assemble(b, p, out, PIN, 'test', layered=layered, parallel=False)
+    oci.assemble(b, p, out, PIN, "engine-" + PIN[:10], layered=layered, parallel=False)
     manifest, config = oci.image(out)
     # Mutate real tar metadata and recompute OCI integrity to isolate the mode gate.
     desc = manifest['layers'][-1]

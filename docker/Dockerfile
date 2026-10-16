@@ -5,11 +5,13 @@
 # 3.12, torch 2.13.0 (CUDA 13.0 build), the fork checked out at the pinned
 # commit and installed editable with upstream's precompiled extensions
 # (VLLM_USE_PRECOMPILED=1), then the runtime extras the engine pins in
-# requirements/cuda.txt (FlashInfer 0.7.0, humming-kernels 0.1.16, TileLang
-# 0.1.12). The pin sits on upstream e55d076f89, which has no nightly wheel of
-# its own; the extensions come from the wheel of b6761e8ded, whose C++, CUDA
-# and Rust sources are identical to e55d076f89 (the two commits between them
-# are Python and tests). Model weights are not in the image; mount them (see
+# requirements/cuda.txt (FlashInfer 0.7.0.post1, humming-kernels 0.1.16, TileLang
+# 0.1.12). The pin sits on upstream 4e0681ed56, whose own nightly wheel
+# supplies the upstream compiled extensions (VLLM_WHEEL_COMMIT). Our own compiled
+# extensions are not compiled here: docker/native_build.py builds them once in
+# this base image, native validation runs those exact files, and this build
+# packs them by hash from docker/native/ (its output; NATIVE_MANIFEST_SHA256
+# pins the manifest). Model weights are not in the image; mount them (see
 # README.md in this folder for the run command).
 #
 # The CUDA 13.3.1 devel base matches the toolkit the release was validated
@@ -22,7 +24,7 @@
 # mounted and used as the entry point, so the layout (LAYOUT=tp4 or pp4) and
 # every setting are chosen at run time (container.env in this folder).
 #
-#   bash docker/build-docker.sh vllm-cmp170hx:1.7.2-ab60b723ad
+#   bash docker/build-docker.sh vllm-cmp170hx:engine-819146023f
 # The wrapper validates the final layer count; Dockerfile instructions cannot
 # inspect the inherited base image manifest.
 
@@ -30,7 +32,8 @@ ARG BASE=nvidia/cuda:13.3.1-devel-ubuntu24.04@sha256:4ff859525f99de5782aa73607ce
 
 ARG IMAGE_LAYERED=1
 
-ARG VLLM_COMMIT=ab60b723ada254a442a4ba5ff27bf837aa27ef83
+ARG VLLM_COMMIT=819146023facb31c04f1f8512e52464835a10d40
+ARG NATIVE_MANIFEST_SHA256=201963595ae5035ae09f31418d650a66cbe09b854ae1de8110ec1d1984f5be26
 
 FROM ${BASE} AS build
 ARG PYTHON_VERSION=3.12
@@ -58,14 +61,14 @@ RUN uv pip install --extra-index-url https://flashinfer.ai/whl/ -r /tmp/CONSTRAI
 ARG VLLM_REPO=https://github.com/Morrowmake/vllm-cmp170hx.git
 ARG VLLM_BRANCH=ampere
 ARG VLLM_COMMIT
-ARG VLLM_WHEEL_COMMIT=b6761e8ded57ef85b708f34af8cab1649eae1069
+ARG VLLM_WHEEL_COMMIT=4e0681ed5654c1d8afb3c104d4381afd08529de8
 # Full transport clone: version construction and wheel lookup need history.
 RUN git clone --no-local --no-tags --single-branch --branch "${VLLM_BRANCH}" "${VLLM_REPO}" /opt/vllm-src \
  && git -C /opt/vllm-src checkout -B "${VLLM_BRANCH}" "${VLLM_COMMIT}" \
  && git -C /opt/vllm-src update-ref "refs/remotes/origin/${VLLM_BRANCH}" "${VLLM_COMMIT}" \
  && git -C /opt/vllm-src fetch --no-tags https://github.com/vllm-project/vllm.git \
-            refs/tags/v0.30.1rc0:refs/tags/v0.30.1rc0 \
- && git -C /opt/vllm-src merge-base --is-ancestor v0.30.1rc0 HEAD \
+            refs/tags/v0.32.0rc0:refs/tags/v0.32.0rc0 \
+ && git -C /opt/vllm-src merge-base --is-ancestor v0.32.0rc0 HEAD \
  && git -C /opt/vllm-src submodule update --init --recursive --depth 1 \
  && git -C /opt/vllm-src reflog expire --expire=now --all \
  && git -C /opt/vllm-src repack -ad \
@@ -74,16 +77,15 @@ RUN VLLM_BUILD_AMPERE_MARLIN=0 VLLM_USE_PRECOMPILED=1 VLLM_PRECOMPILED_WHEEL_COM
     VLLM_PRECOMPILED_WHEEL_VARIANT=cu130 \
     uv pip install --no-deps -e /opt/vllm-src \
  && uv pip freeze > /opt/venv/requirements.lock.txt
-COPY docker/runtime_tree.py docker/payload.py docker/cache_seed.py docker/rootfs_smoke.py docker/bwrap_targets.py docker/p2p_build.py docker/THIRD_PARTY_NOTICES p2p_probe.cu LICENSE /tmp/
-RUN test -f /opt/vllm-src/csrc/libtorch_stable/moe/ampere_marlin/build_standalone.py \
-    || (echo "Set VLLM_REPO, VLLM_BRANCH and VLLM_COMMIT to a source with optional Marlin support" >&2; exit 1)
-RUN cd /opt/vllm-src && CUDA_VISIBLE_DEVICES= VLLM_BUILD_AMPERE_MARLIN=1 \
-    PATH=/opt/venv/bin:$PATH /opt/venv/bin/python \
-    csrc/libtorch_stable/moe/ampere_marlin/build_standalone.py --out /opt/vllm-src/vllm \
-    --build-dir /tmp/ampere-marlin-build \
- && rm -rf /tmp/ampere-marlin-build
-RUN CUDA_VISIBLE_DEVICES= /opt/venv/bin/python -c "from vllm.ampere_marlin import require_extension; require_extension()"
-RUN CUDA_VISIBLE_DEVICES= /opt/venv/bin/python -c "import torch, vllm, vllm._C_stable_libtorch, vllm._moe_C_stable_libtorch, vllm._custom_ops, triton, tilelang, flashinfer, humming; from vllm.v1.attention.backends.mla import triton_mla_sparse; from vllm.v1.attention.ops import triton_mqa_logits, triton_e4m3; from vllm.v1.worker.gpu import prologue_fuse; from vllm.distributed.device_communicators import host_shm_all_reduce; print(vllm.__version__, torch.__version__, torch.version.cuda)" \
+COPY docker/runtime_tree.py docker/payload.py docker/cache_seed.py docker/rootfs_smoke.py docker/bwrap_targets.py docker/p2p_build.py docker/native_build.py docker/THIRD_PARTY_NOTICES p2p_probe.cu LICENSE /tmp/
+COPY docker/native/ /tmp/native/
+ARG NATIVE_MANIFEST_SHA256
+RUN /opt/venv/bin/python /tmp/native_build.py pack --native /tmp/native --venv-check \
+    --manifest-sha256 "${NATIVE_MANIFEST_SHA256}" --commit "${VLLM_COMMIT}" --opt /opt \
+ && rm -rf /tmp/native
+# Optional Marlin is checked only when the pinned manifest ships it.
+RUN CUDA_VISIBLE_DEVICES= /opt/venv/bin/python -c "import json; shipped = 'vllm/_ampere_marlin_C.abi3.so' in json.load(open('/opt/venv/.native-manifest.json'))['artefacts']; from vllm.ampere_marlin import require_extension; require_extension() if shipped else print('optional Marlin: not shipped')"
+RUN CUDA_VISIBLE_DEVICES= /opt/venv/bin/python -c "import torch, vllm, vllm._C_stable_libtorch, vllm._moe_C_stable_libtorch, vllm._custom_ops, triton, tilelang, flashinfer, humming; from vllm.v1.attention.backends.mla import triton_mla_sparse; from vllm.v1.attention.ops import triton_mqa_logits, triton_e4m3; from vllm.distributed.device_communicators import host_shm_all_reduce; print(vllm.__version__, torch.__version__, torch.version.cuda)" \
  && find /opt/python /opt/venv /opt/vllm-src -name __pycache__ -type d -prune -exec rm -rf {} + \
  && /opt/venv/bin/python /tmp/runtime_tree.py finalize /opt "${VLLM_COMMIT}" \
  && /opt/venv/bin/python /tmp/runtime_tree.py check /opt "${VLLM_COMMIT}"
@@ -110,7 +112,7 @@ COPY --from=build /payload/engine/opt/image-tools/ /opt/image-tools/
 
 FROM runtime-${IMAGE_LAYERED}
 ARG VLLM_COMMIT
-ARG RELEASE=1.7.2
+ARG IMAGE_TAG=engine-819146023f
 ENV PATH=/opt/venv/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     VIRTUAL_ENV=/opt/venv \
     CUDA_HOME=/usr/local/cuda \
@@ -120,7 +122,7 @@ LABEL org.opencontainers.image.title="vllm-cmp170hx" \
       org.opencontainers.image.source="https://github.com/Morrowmake/vllm-cmp170hx" \
       org.opencontainers.image.revision="${VLLM_COMMIT}" \
       org.opencontainers.image.url="https://github.com/Morrowmake/glm53-flash-cmp170hx-recipe" \
-      org.opencontainers.image.version="${RELEASE}" \
+      org.opencontainers.image.version="${IMAGE_TAG}" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.base.name="docker.io/nvidia/cuda:13.3.1-devel-ubuntu24.04" \
       org.opencontainers.image.base.digest="sha256:4ff859525f99de5782aa73607ce24219b07dddd48d12b97c1c301d7e1cfb0a87"
