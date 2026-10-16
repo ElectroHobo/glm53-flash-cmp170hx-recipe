@@ -196,6 +196,9 @@ their sparkDash prompt constants (MIT), used as data with attribution. No code f
 
 ## Credits
 
+If this recipe helps you, please credit Morrowmake and link this repository.
+Citation metadata: [`CITATION.cff`](CITATION.cff).
+
 - **[MiaAI-Lab](https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks)**
   for publishing the benchmark prompts used in the decode tables.
 - **[incoai](https://huggingface.co/incoai/GLM-5.3-Flash-DFlash2)** for the

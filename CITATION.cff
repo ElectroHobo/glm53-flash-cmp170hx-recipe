@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If this recipe helps you, please cite it."
+title: "GLM-5.3-Flash on 4x NVIDIA CMP 170HX: a serving recipe"
+authors:
+  - name: Morrowmake
+repository-code: "https://github.com/Morrowmake/glm53-flash-cmp170hx-recipe"
+license: MIT
+version: 1.8.0
+date-released: 2026-10-16
