@@ -49,6 +49,48 @@ def test_compose_runs_the_start_container_after_prepare():
     assert './cache:/cache' in prepare['volumes'] and './cache:/cache' in server['volumes']
     assert '${MODELS_DIR:-./models}:/models' in prepare['volumes']
     assert 'HOST_UID' not in str(server)
+    # The server comes back after a crash; prepare must finish, never loop.
+    assert server['restart'] == 'on-failure:3' and 'restart' not in prepare
+
+
+def test_checkpoints_are_pinned_alike_for_start_and_compose():
+    start = (ROOT / 'start.sh').read_text()
+    prepare = PREPARE.read_text()
+    for key in ('TARGET_REPO', 'TARGET_REVISION', 'DRAFTER_REPO', 'DRAFTER_REVISION', 'NEED_DISK_GB'):
+        default = re.compile(r'^' + key + r'="\$\{' + key + r':-(.+)\}"', re.M)
+        assert default.search(prepare)[1] == default.search(start)[1], key
+    for key in ('TARGET_REVISION', 'DRAFTER_REVISION'):
+        value = re.search(r'^' + key + r'="\$\{' + key + r':-(.+)\}"', start, re.M)[1]
+        assert re.fullmatch(r'[0-9a-f]{40}', value), key
+        assert re.findall(r'^# ' + key + r'=(.+)$', (ROOT / '.env.advanced.example').read_text(),
+                          re.M) == [value]
+
+
+def test_fetch_passes_the_pinned_revision(tmp_path):
+    hf = tmp_path / 'hf'
+    hf.write_text('#!/bin/sh\necho "hf $*"\n')
+    hf.chmod(0o755)
+    target = write_checkpoint(tmp_path / 'target')
+    run = prepare_functions(f'HF="{hf}"\nfetch org/repo "{target}" rev1\nfetch org/repo "{target}"\n')
+    assert run.returncode == 0, run.stderr
+    lines = [line for line in run.stdout.splitlines() if line.startswith('hf ')]
+    assert lines == [f'hf download org/repo --revision rev1 --local-dir {target}',
+                     f'hf download org/repo --local-dir {target}']
+
+
+def test_start_download_passes_both_revisions(tmp_path):
+    (tmp_path / '.env.example').write_text('')
+    run = run_start(tmp_path, '''model_present() { return 1; }
+hf_download() { echo "fetch $1 $2 $3"; }
+do_download
+''')
+    assert run.returncode == 0, run.stderr
+    start = (ROOT / 'start.sh').read_text()
+    revision = {k: re.search(r'^' + k + r'="\$\{' + k + r':-(.+)\}"', start, re.M)[1]
+                for k in ('TARGET_REVISION', 'DRAFTER_REVISION')}
+    assert f"fetch canada-quant/GLM-5.3-Flash-W4A16-MTP {revision['TARGET_REVISION']} " in run.stdout
+    assert f"fetch incoai/GLM-5.3-Flash-DFlash2 {revision['DRAFTER_REVISION']} " in run.stdout
+
 
 
 def write_checkpoint(path, shards=('a.safetensors', 'b.safetensors')):

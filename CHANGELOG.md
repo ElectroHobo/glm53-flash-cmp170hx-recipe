@@ -36,10 +36,18 @@
   `./start.sh update` moves forward only. Older releases remain as git tags; their
   images may be retired. Delete an `IMAGE` line from `.env` to follow this release's
   image.
+- **Docker Compose restarts the server after a crash** (`restart: on-failure:3`): a
+  non-zero exit brings it back, up to 3 times; `docker compose stop` and `down` stop it
+  for good. `./start.sh` does not restart a crashed server; run `./start.sh restart`.
 - **An interrupted checkpoint download is resumed** instead of being taken as
   complete. A checkpoint now counts as present only with its config, every shard its
   index names and no partial download left behind; `./start.sh` and Compose use the
   same check.
+- **The checkpoints are pinned** to the Hugging Face revisions this release was
+  validated with: `TARGET_REVISION` (`5681f7c2dc6436d63f82ab6fb892b4f5062b8304`) and
+  `DRAFTER_REVISION` (`bf582e4eacc1810f76656d1811693ff6c6737d2a`), for `./start.sh`
+  and Docker Compose alike. Before, a fresh download took whatever the repositories'
+  `main` held at the time. Checkpoints you have already downloaded are kept.
 - **`DRY=1 ./start.sh` prints the server's full settings.** The dry run stopped with
   "cannot determine optional Marlin installation" on a host without the engine, so
   the settings `serve.sh` would use were never printed. It now prints them in full;

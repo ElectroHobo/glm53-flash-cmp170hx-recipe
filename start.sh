@@ -146,8 +146,11 @@ RELEASE_VLLM_COMMIT=ab60b723ada254a442a4ba5ff27bf837aa27ef83
 RELEASE_IMAGE=ghcr.io/morrowmake/vllm-cmp170hx@sha256:0d249835cb8502316403350a3cad9d531b46e5249e4076ecb70faa42067b5b7a
 IMAGE="${IMAGE:-$RELEASE_IMAGE}"
 MODELS_DIR="${MODELS_DIR:-$SCRIPT_DIR/models}"
+# Checkpoints, pinned to the Hub revisions this release was validated with.
 TARGET_REPO="${TARGET_REPO:-canada-quant/GLM-5.3-Flash-W4A16-MTP}"
+TARGET_REVISION="${TARGET_REVISION:-5681f7c2dc6436d63f82ab6fb892b4f5062b8304}"
 DRAFTER_REPO="${DRAFTER_REPO:-incoai/GLM-5.3-Flash-DFlash2}"
+DRAFTER_REVISION="${DRAFTER_REVISION:-bf582e4eacc1810f76656d1811693ff6c6737d2a}"
 MODEL="${MODEL:-$MODELS_DIR/${TARGET_REPO##*/}}"
 DFLASH_MODEL="${DFLASH_MODEL:-$MODELS_DIR/${DRAFTER_REPO##*/}}"
 HOST="${HOST:-127.0.0.1}"
@@ -454,16 +457,17 @@ models_present() {
     model_present "$DFLASH_MODEL"
 }
 
-# hf_download <repo> <local dir>: with the hf client in the engine image, run
-# as this user so the files are yours. An interrupted download resumes.
+# hf_download <repo> <revision> <local dir>: with the hf client in the engine
+# image, run as this user so the files are yours. An interrupted download
+# resumes.
 hf_download() {
-    local repo="$1" dir="$2"
+    local repo="$1" revision="$2" dir="$3"
     mkdir -p "$dir"
     container_image_present || die "the engine image is not here yet — run ./start.sh install first"
     docker run --rm --user "$(id -u):$(id -g)" -e HF_HOME=/tmp/hf \
         ${HF_TOKEN:+-e HF_TOKEN} -v "$dir:/download" \
         -v "$SCRIPT_DIR/docker/prepare.sh:/recipe/prepare.sh:ro" \
-        --entrypoint /bin/bash "$IMAGE" /recipe/prepare.sh fetch "$repo" /download
+        --entrypoint /bin/bash "$IMAGE" /recipe/prepare.sh fetch "$repo" /download "$revision"
 }
 
 do_download() {
@@ -472,8 +476,8 @@ do_download() {
     if model_present "$MODEL" && [ "${REFRESH_WEIGHTS:-0}" != "1" ]; then
         log "download: $(basename "$MODEL") complete — skipping"
     else
-        log "download: $TARGET_REPO (~178 GiB / 191 GB, 22 files)"
-        hf_download "$TARGET_REPO" "$MODEL"
+        log "download: $TARGET_REPO @ ${TARGET_REVISION:0:10} (~178 GiB / 191 GB, 22 files)"
+        hf_download "$TARGET_REPO" "$TARGET_REVISION" "$MODEL"
     fi
 
     if [ "$SPEC_MODE" != "dflash" ]; then
@@ -481,8 +485,8 @@ do_download() {
     elif model_present "$DFLASH_MODEL" && [ "${REFRESH_WEIGHTS:-0}" != "1" ]; then
         log "download: $(basename "$DFLASH_MODEL") complete — skipping"
     else
-        log "download: $DRAFTER_REPO (~2.2 GiB / 2.3 GB, 5 files)"
-        hf_download "$DRAFTER_REPO" "$DFLASH_MODEL"
+        log "download: $DRAFTER_REPO @ ${DRAFTER_REVISION:0:10} (~2.2 GiB / 2.3 GB, 5 files)"
+        hf_download "$DRAFTER_REPO" "$DRAFTER_REVISION" "$DFLASH_MODEL"
     fi
     log "download: done"
 }

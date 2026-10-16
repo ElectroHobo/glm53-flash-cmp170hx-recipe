@@ -9,8 +9,9 @@
 #                                complete. Hugging Face resumes a partial
 #                                download; a complete checkpoint is skipped
 #                                without contacting the Hub.
-#   prepare.sh fetch REPO DIR    download one checkpoint into DIR as the
-#                                current user (./start.sh download).
+#   prepare.sh fetch REPO DIR [REVISION]
+#                                download one checkpoint (at REVISION) into DIR
+#                                as the current user (./start.sh download).
 #   prepare.sh serve ARGS...     Docker Compose's server: runs serve.sh ARGS as
 #                                the owner of /cache, the serving user chosen by
 #                                prepare, never as root.
@@ -29,7 +30,9 @@
 set -euo pipefail
 
 TARGET_REPO="${TARGET_REPO:-canada-quant/GLM-5.3-Flash-W4A16-MTP}"
+TARGET_REVISION="${TARGET_REVISION:-5681f7c2dc6436d63f82ab6fb892b4f5062b8304}"
 DRAFTER_REPO="${DRAFTER_REPO:-incoai/GLM-5.3-Flash-DFlash2}"
+DRAFTER_REVISION="${DRAFTER_REVISION:-bf582e4eacc1810f76656d1811693ff6c6737d2a}"
 NEED_DISK_GB="${NEED_DISK_GB:-185}"
 MODELS=/models
 CACHE=/cache
@@ -59,10 +62,10 @@ complete() {
 }
 
 fetch() {
-    local repo="$1" dir="$2"
+    local repo="$1" dir="$2" revision="${3:-}"
     [ -x "$HF" ] || fail "no Hugging Face client at $HF"
-    say "downloading $repo (resumes a partial download)"
-    "$HF" download "$repo" --local-dir "$dir"
+    say "downloading $repo${revision:+ @ $revision} (resumes a partial download)"
+    "$HF" download "$repo" ${revision:+--revision "$revision"} --local-dir "$dir"
     complete "$dir" || fail "$repo: the download ended but $dir is still incomplete; run the same command again to resume"
     say "$repo: complete"
 }
@@ -130,7 +133,11 @@ prepare() {
         fail "only ${avail} GiB free under the model directory and ${used} GiB already downloaded; the checkpoints need ~${NEED_DISK_GB} GiB"
     fi
     for dir in "${missing[@]}"; do
-        if [ "$dir" = "$target" ]; then fetch "$TARGET_REPO" "$dir"; else fetch "$DRAFTER_REPO" "$dir"; fi
+        if [ "$dir" = "$target" ]; then
+            fetch "$TARGET_REPO" "$dir" "$TARGET_REVISION"
+        else
+            fetch "$DRAFTER_REPO" "$dir" "$DRAFTER_REVISION"
+        fi
     done
     say "checkpoints ready"
 }
@@ -146,8 +153,8 @@ serve() {
 
 case "${1:-}" in
     prepare) prepare ;;
-    fetch) [ "$#" = 3 ] || fail "usage: prepare.sh fetch REPO DIR"; fetch "$2" "$3" ;;
+    fetch) [ "$#" = 3 ] || [ "$#" = 4 ] || fail "usage: prepare.sh fetch REPO DIR [REVISION]"; fetch "$2" "$3" "${4:-}" ;;
     serve) shift; serve "$@" ;;
     check) [ "$#" = 2 ] || fail "usage: prepare.sh check DIR"; complete "$2" ;;
-    *) fail "usage: prepare.sh prepare | fetch REPO DIR | serve ARGS... | check DIR" ;;
+    *) fail "usage: prepare.sh prepare | fetch REPO DIR [REVISION] | serve ARGS... | check DIR" ;;
 esac
