@@ -1,7 +1,46 @@
 # Changelog
 
-## Unreleased
+## 1.8.0 — 2026-10-16
 
+Engine: `819146023facb31c04f1f8512e52464835a10d40` (fork branch `ampere`, tag
+`glm53-recipe-1.8.0`), rebased on upstream vLLM `4e0681ed56`, 1,144 commits after
+1.7.2's engine. Image: `ghcr.io/morrowmake/vllm-cmp170hx:engine-819146023f`;
+digest `sha256:18a2f26207568128e1d792ce923e86a74e40def1e43e492db83132cab8cdbe14` (seed: no). Starts compile on first boot (cold),
+so the first start after the update is slower; later starts reuse `./cache`.
+
+- **One command from a fresh clone: `./start.sh` or `docker compose up`.** Plain
+  `docker compose up` now does the whole first start: a `prepare` service
+  runs first, makes `./cache` and the model directory writable by the serving user,
+  and downloads the two checkpoints (resumed if interrupted, skipped once complete);
+  then the server starts, and `docker compose ps` shows it healthy once `/health`
+  answers. The server runs as the owner of the checkout, never as root, so
+  `HOST_UID`/`HOST_GID` and the manual `mkdir`, `./install.sh` and `./download.sh`
+  steps are no longer needed (`HOST_UID` and `HOST_GID` still override the user).
+  Docker's root-owned bind-mount directories no longer break a first start. The
+  one-command start itself does not change the server's launch settings (`serve.sh`
+  and `docker/container.env`); the engine switch renames below do.
+- **The engine runs only in the container.** `RUNTIME=native`, the venv build in
+  `./install.sh` and the native documentation are removed. A checkout with a native
+  install moves to the container on `./start.sh update` (or `restart`): it checks
+  Docker first and leaves the native server running if Docker is not usable,
+  otherwise stops the native server, pulls the image and starts the container with
+  your `.env` and the checkpoints you already downloaded, and says what it did. It
+  deletes nothing: `venv/` and `vllm-src/` stay until you remove them. The first
+  container start compiles its kernel caches into `./cache`, so it is slower.
+  Install Docker and the NVIDIA Container Toolkit first (README → One-time host
+  setup). In `.env`, delete `RUNTIME`, `VLLM_COMMIT` and the native-only
+  `VLLM_REPO`, `VLLM_BRANCH`, `VLLM_PRECOMPILED_WHEEL_COMMIT`, `VENV`, `VLLM_SRC`,
+  `CUDA_HOME`, `PYTHON_VERSION`, `BUILD_FROM_SOURCE`, `MAX_JOBS`,
+  `NATIVE_INSTALL_RESUME`, `FLASHINFER_INSTALL_*`, `TORCH_CUDA_ARCH_LIST`,
+  `TORCH_INDEX_URL` and `VLLM_BUILD_AMPERE_MARLIN` (the image already includes the
+  optional Marlin library). `./start.sh` warns about `RUNTIME`, `VLLM_COMMIT` and
+  `VLLM_BUILD_AMPERE_MARLIN` until they are removed; the others are ignored.
+- **New engine on a newer upstream vLLM.** The fork is rebased on upstream
+  `4e0681ed56` (1.7.0–1.7.2 sat on upstream `e55d076f89`). Same features, same
+  defaults for context (262,144), batch (`--max-num-batched-tokens 3463`,
+  `--max-num-seqs 8`) and fair-prefill slice (384). Published TP4 numbers against
+  1.7.2's published numbers are in the README and
+  [Results](https://github.com/Morrowmake/glm53-flash-cmp170hx-recipe/blob/main/docs/results.md).
 - **Engine switches renamed for engine 819146023f; old names in `.env` are now
   ignored.** `serve.sh` sets the release defaults under the engine's new names,
   passes the adaptive draft depth as `--speculative-config` `adaptive_k` and
@@ -57,59 +96,20 @@
   compiled extensions (optional Marlin and EXL3) are built once with
   `docker/native_build.py` and packed into the image by hash, the same files the
   release validation ran, instead of being compiled again during the image build.
-  Image tags now name the engine source (`engine-<commit>`), independent of recipe
+  Image tags now name the engine source (`engine-819146023f`), independent of recipe
   release numbers. Seed: no (the image carries no compilation-cache seed; the first
   start compiles its kernels).
-- **One command from a fresh clone: `./start.sh` or `docker compose up`.** Plain
-  `docker compose up` now does the whole first start: a `prepare` service
-  runs first, makes `./cache` and the model directory writable by the serving user,
-  and downloads the two checkpoints (resumed if interrupted, skipped once complete);
-  then the server starts, and `docker compose ps` shows it healthy once `/health`
-  answers. The server runs as the owner
-  of the checkout, never as root, so `HOST_UID`/`HOST_GID` and the manual `mkdir`,
-  `./install.sh` and `./download.sh` steps are no longer needed (`HOST_UID` and
-  `HOST_GID` still override the user). Docker's root-owned bind-mount directories no
-  longer break a first start. The server's launch settings (`serve.sh` and
-  `docker/container.env`) are unchanged.
-- **Docker Compose in 1.7.2 started 1.7.1's engine image** (fixes for #4, #7, #9 and
-  #10 missing); updating to this release fixes it. `docker-compose.yml` now runs the
-  image `./start.sh` pins, and a check keeps the two equal.
-- **The native runtime is gone: the engine runs only in the container.**
-  `RUNTIME=native`, the venv build in `./install.sh` and the native documentation are
-  removed. A checkout with a native install moves to the container on
-  `./start.sh update` (or `restart`): it checks Docker first and leaves the native
-  server running if Docker is not usable, otherwise stops the native server, pulls the
-  image and starts the container with your `.env` and the checkpoints you already
-  downloaded, and says what it did. It deletes nothing: `venv/` and `vllm-src/` stay
-  until you remove them. The first container start compiles its kernel caches into
-  `./cache`, so it is slower. Install Docker and the NVIDIA Container Toolkit first
-  (README → One-time host setup). In `.env`, delete `RUNTIME`, `VLLM_COMMIT` and the
-  native-only `VLLM_REPO`, `VLLM_BRANCH`, `VLLM_PRECOMPILED_WHEEL_COMMIT`, `VENV`, `VLLM_SRC`,
-  `CUDA_HOME`, `PYTHON_VERSION`, `BUILD_FROM_SOURCE`, `MAX_JOBS`,
-  `NATIVE_INSTALL_RESUME`, `FLASHINFER_INSTALL_*`, `TORCH_CUDA_ARCH_LIST`,
-  `TORCH_INDEX_URL` and `VLLM_BUILD_AMPERE_MARLIN` (the image already includes the
-  optional Marlin library). `./start.sh` warns about `RUNTIME`, `VLLM_COMMIT` and
-  `VLLM_BUILD_AMPERE_MARLIN` until they are removed; the others are ignored.
-- **Rolling back to an earlier release is no longer a supported path.**
-  `./start.sh update` moves forward only. Older releases remain as git tags; their
-  images may be retired. Delete an `IMAGE` line from `.env` to follow this release's
-  image.
-- **Docker Compose restarts the server after a crash** (`restart: on-failure:3`): a
-  non-zero exit brings it back, up to 3 times; `docker compose stop` and `down` stop it
-  for good. `./start.sh` does not restart a crashed server; run `./start.sh restart`.
-- **An interrupted checkpoint download is resumed** instead of being taken as
-  complete. A checkpoint now counts as present only with its config, every shard its
-  index names and no partial download left behind; `./start.sh` and Compose use the
-  same check.
-- **The checkpoints are pinned** to the Hugging Face revisions this release was
-  validated with: `TARGET_REVISION` (`5681f7c2dc6436d63f82ab6fb892b4f5062b8304`) and
-  `DRAFTER_REVISION` (`bf582e4eacc1810f76656d1811693ff6c6737d2a`), for `./start.sh`
-  and Docker Compose alike. Before, a fresh download took whatever the repositories'
-  `main` held at the time. Checkpoints you have already downloaded are kept.
-- **`DRY=1 ./start.sh` prints the server's full settings.** The dry run stopped with
-  "cannot determine optional Marlin installation" on a host without the engine, so
-  the settings `serve.sh` would use were never printed. It now prints them in full;
-  the compiled-Marlin default it shows is the image's. Real starts are unchanged.
+- **Reasoning now always arrives in `reasoning`, never in `content`.** GLM-5.3
+  always reasons: its chat template has no thinking switch and its generation
+  prompt always opens `<think>`. The new engine's GLM parser (upstream vLLM #56994)
+  knows this, ignores `"chat_template_kwargs": {"enable_thinking": false}` (and
+  `thinking: false`) with a warning, and streams the reasoning in the message's
+  `reasoning` field; the answer is in `content`. On 1.7.2, a request with thinking
+  off received the reasoning preamble inside `content`; that leak is gone.
+  **Size `max_tokens` for the reasoning plus the answer:** a reply that reaches
+  the limit while still reasoning has an empty `content` and
+  `finish_reason: "length"`. Use `reasoning_effort` (`low`, `high`, `max`) to
+  shorten the reasoning.
 - **`MM_CAP=1`: images above the prefill chunk were refused with HTTP 400** (#11). The
   launcher bounded images with `max_pixels`, which the memory profiler read but the
   GLM-5.3 image processor ignores, so the encoder cache was sized for small images while
@@ -117,10 +117,67 @@
   passes only `max_image_tokens` (`MM_MAX_IMAGE_TOKENS`, default `MM_MAX_PIXELS / 784`
   = 1,280), which caps every image, and each whole video, at that many tokens. This
   release's engine reads the same key in its profiler, so profiled and real items agree
-  and the `max_pixels` warning at startup is gone. The fix needs that engine: it does not
-  work as a launcher-only change on the 1.7.2 engine (`ab60b723ad`), whose profiler
-  ignores `max_image_tokens`. The default `MM_CAP=0` was not affected. Thanks to
-  @YulHeon for the diagnosis and the fix.
+  and the `max_pixels` warning at startup is gone. The default `MM_CAP=0` was not
+  affected. Thanks to @YulHeon for the diagnosis and the fix.
+- **Upper limit on decoded media per request.** The new upstream base caps the decoded
+  images, video frames and audio of one request at about 683 MiB
+  (`VLLM_MAX_MEDIA_REQUEST_DECODE_BYTES`, default 715,827,880 bytes), whatever `MM_CAP`
+  is set to. Larger requests get HTTP 400. At 1 frame per second that is about 115
+  frames of 1080p video or about 258 frames of 720p. To raise it, set
+  `VLLM_MAX_MEDIA_REQUEST_DECODE_BYTES` in the server environment. Each concurrent
+  request can then hold that much decoded media in host RAM.
+- **The checkpoints are pinned** to the Hugging Face revisions this release was
+  validated with: `TARGET_REVISION` (`5681f7c2dc6436d63f82ab6fb892b4f5062b8304`) and
+  `DRAFTER_REVISION` (`bf582e4eacc1810f76656d1811693ff6c6737d2a`), for `./start.sh`
+  and Docker Compose alike. Before, a fresh download took whatever the repositories'
+  `main` held at the time. Checkpoints you have already downloaded are kept.
+- **Docker Compose in 1.7.2 started 1.7.1's engine image** (fixes for #4, #7, #9 and
+  #10 missing); updating to this release fixes it. `docker-compose.yml` now runs the
+  image `./start.sh` pins, and a check keeps the two equal.
+- **Docker Compose restarts the server after a crash** (`restart: on-failure:3`): a
+  non-zero exit brings it back, up to 3 times; `docker compose stop` and `down` stop it
+  for good. `./start.sh` does not restart a crashed server; run `./start.sh restart`.
+- **An interrupted checkpoint download is resumed** instead of being taken as
+  complete. A checkpoint now counts as present only with its config, every shard its
+  index names and no partial download left behind; `./start.sh` and Compose use the
+  same check.
+- **`./start.sh` no longer stops a server that is still loading.** While it waited
+  for a launch, one failed `docker container inspect` (an empty answer) made it
+  report the server as exited and stop the container. The container now counts as
+  gone only when two checks a couple of seconds apart both fail.
+- **`DRY=1 ./start.sh` prints the server's full settings.** The dry run stopped with
+  "cannot determine optional Marlin installation" on a host without the engine, so
+  the settings `serve.sh` would use were never printed. It now prints them in full;
+  the compiled-Marlin default it shows is the image's. Real starts are unchanged.
+- **The `ampere-glm53` fork branch is retired.** It is frozen at 1.7.2's engine
+  (`ab60b723ad`) and will be deleted. Delete any `VLLM_BRANCH=ampere-glm53` line
+  from `.env`.
+- **Updating moves forward only.** Rolling back to an earlier release is not a
+  supported path. Older releases are git tags; their images may be retired.
+- **How this engine was validated.** The engine changes since 1.7.2 (the upstream
+  rebase and two fixes it needed: row-aligned KV blocks for sparse attention at
+  four-way tensor parallel, one KV spec per draft-model group at four-way pipeline
+  parallel) are validated together against 1.7.2: output divergence, quality and
+  speed against 1.7.2's stored results.
+
+**Updating:** run `./start.sh update`. It pulls this release, re-runs the new
+`start.sh`, pulls the new image and restarts; a native install moves to the
+container (above). `.env` is preserved. Then:
+
+- **Size `max_tokens` for reasoning plus answer** in your clients; read the
+  answer from `content` and the reasoning from `reasoning`.
+  `"chat_template_kwargs": {"enable_thinking": false}` has no effect.
+- In `.env`, delete `VLLM_BRANCH=ampere-glm53`, any `IMAGE=…` or `VLLM_COMMIT=…`
+  line, and the native-only lines listed above.
+- Rename any engine switch set under an old name in `.env` or
+  `docker/container.env` (list above); old names are ignored. Delete a `SPEC_N`
+  line: with DFlash2, `serve.sh` refuses it.
+- Delete an `EXTRA_ARGS='--mm-processor-kwargs {"max_pixels":…,"max_image_tokens":…}'`
+  line if you added it as the 1.7.2 workaround for #11; `MM_CAP=1` now does this
+  itself. To raise the cap, set `MM_MAX_IMAGE_TOKENS` instead.
+
+`MM_MAX_IMAGE_TOKENS` is a new optional setting (only read with `MM_CAP=1`). No
+other `.env` default changed.
 
 ## 1.7.2 — 2026-10-06
 

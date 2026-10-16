@@ -7,15 +7,15 @@
   &nbsp;
   <a href="https://github.com/Morrowmake/vllm-cmp170hx/tree/819146023facb31c04f1f8512e52464835a10d40"><img alt="engine" src="https://img.shields.io/badge/engine-vLLM%20fork%20%40%20819146023facb31c04f1f8512e52464835a10d40-4b32c3?style=flat"></a>
   &nbsp;
-  <img alt="release" src="https://img.shields.io/badge/release-1.7.2-2ea44f?style=flat">
+  <img alt="release" src="https://img.shields.io/badge/release-1.8.0-2ea44f?style=flat">
   &nbsp;
   <img alt="licence" src="https://img.shields.io/badge/recipe-MIT-blue?style=flat">
 </p>
 
 **A 320B-parameter MoE with a 262,144-token context, served on four CMP 170HX
-cards in two layouts. Release 1.7.0 tensor-parallel results with verified peer-to-peer at 74 SMs:
-482.2 tok/s for one user and 948.6 tok/s across eight,
-3,197 tok/s cold prefill and a 1,199,570-token KV pool. The weights
+cards in two layouts. Release 1.8.0 tensor-parallel results with verified peer-to-peer at 74 SMs:
+482.6 tok/s for one user and 943.7 tok/s across eight,
+3,161 tok/s cold prefill and a 1,203,765-token KV pool. The weights
 are W4A16 and nothing else is cut: the KV cache is full precision, there is no
 FP8 anywhere, and nothing is offloaded to CPU or disk.**
 
@@ -25,7 +25,7 @@ video, and a **DFlash2** speculative drafter. Upstream vLLM's sparse-attention
 path needs a Hopper GPU; the CMP 170HX is Ampere (sm_80). Our
 [vLLM fork](https://github.com/Morrowmake/vllm-cmp170hx/tree/ampere) adds
 the Ampere kernels that make the model run at all, then spends the rest of its
-patches on making it fast and making it repeatable. It ships as a container
+patches on making it fast and making it repeatable. It runs only as a container
 image, so the engine and its Python environment stay out of your system.
 P2P is enabled automatically after a startup [content check](docs/how-to-use.md#pcie-peer-to-peer) passes; otherwise the server runs with P2P disabled.
 
@@ -47,12 +47,21 @@ curl http://127.0.0.1:8000/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model": "glm-5.3-flash",
        "messages": [{"role": "user", "content": "Write a haiku about PCIe."}],
-       "max_tokens": 400}'
+       "max_tokens": 4096}'
 ```
 
+> **GLM-5.3 always reasons before it answers.** The reasoning comes back in the
+> message's `reasoning` field and the answer in `content`. **Set `max_tokens`
+> for the reasoning plus the answer:** if the limit is reached while the model
+> is still reasoning, `content` comes back empty with `finish_reason: "length"`.
+> `"chat_template_kwargs": {"enable_thinking": false}` has no effect; use
+> `reasoning_effort` (`low`, `high`, `max`) to shorten the reasoning
+> ([Talk to it](docs/how-to-use.md#talk-to-it)).
+
 `./start.sh` skips anything already done, so running it twice is safe; an
-interrupted download resumes. Matching
-warm-cache seeds reuse compilation caches ([details](docker/RELEASE.md#compilation-cache-seeds)).
+interrupted download resumes. The image ships no warm-cache seed: it starts
+compile on first boot (cold), so the first start is slower; later starts reuse
+the compiled kernels in `./cache`.
 Any OpenAI-compatible client works with base URL `http://127.0.0.1:8000/v1`
 and model `glm-5.3-flash`. The API listens on this machine only and has no
 API key unless you [change that](docs/how-to-use.md#serving-other-machines).
@@ -67,7 +76,12 @@ docker compose up              # or in the background: docker compose up -d
 
 It downloads the checkpoints, then starts the server as the owner of the
 checkout; `docker compose ps` shows it healthy once `/health` answers
-([Docker Compose](docs/how-to-use.md#docker-compose)). Use one or the other.
+([Docker Compose](docs/how-to-use.md#docker-compose)). Compose restarts a
+crashed server up to 3 times; `./start.sh` does not (run `./start.sh restart`).
+Use one or the other.
+
+Both download the checkpoints at the exact Hugging Face revisions this release
+was validated with.
 
 > **Which setups this release is for.** Two layouts, one switch
 > (`LAYOUT=tp4` or `LAYOUT=pp4`):
@@ -102,29 +116,34 @@ checkout; `docker compose ps` shows it healthy once `/health` answers
 
 ## Headline numbers
 
-Measured 2026-10-03 on 4× CMP 170HX, 74 SMs per card, mainline cmpunlocker
+Measured 2026-10-16 on 4× CMP 170HX, 74 SMs per card, mainline cmpunlocker
 with P2P, recipe defaults, 262,144-token context, 180 W per card and PCIe x16 links.
-Decode uses the MiaAI-Lab protocol: 400 tokens, temperature 0, thinking off;
-one user is the median of ten runs (five on each of two boots), eight users the
-median aggregate rate of three runs on one boot.
+Decode uses the MiaAI-Lab protocol: 400 tokens, temperature 0, requests sent with
+thinking off (GLM-5.3 reasons regardless; reasoning tokens count, as in every
+earlier release); one user is the median of five runs, and two, four and eight
+users the median aggregate rate of three runs, all on one boot.
 
-| | Tensor-parallel 4<br>+ [peer-to-peer](docs/how-to-use.md#pcie-peer-to-peer) (default after verification) |
-|---|---:|
-| **1 user** · structured | **482.2** |
-| **1 user** · code | **447.7** |
-| **1 user** · prose | **210.6** |
-| **8 users, total** · structured | 948.6 |
-| **8 users, total** · code | 834.1 |
-| **8 users, total** · prose | 684.6 |
-| **Prompt reading** (cold prefill) | 3,197 |
-| **KV pool** (tokens) | 1,199,570 |
+| | Tensor-parallel 4<br>+ [peer-to-peer](docs/how-to-use.md#pcie-peer-to-peer) (default after verification) | 1.7.2 published | vs 1.7.2 published |
+|---|---:|---:|---:|
+| **1 user** · structured | **482.6** | 482.2 | +0.1 % |
+| **1 user** · code | **442.1** | 447.7 | −1.3 % |
+| **1 user** · prose | **232.1** | 210.6 | +10.2 % |
+| **8 users, total** · structured | 943.7 | 948.6 | −0.5 % |
+| **8 users, total** · code | 835.0 | 834.1 | +0.1 % |
+| **8 users, total** · prose | 667.2 | 684.6 | −2.5 % |
+| **Prompt reading** (cold prefill) | 3,161 | 3,197 | −1.1 % |
+| **KV pool** (tokens) | 1,203,765 | 1,199,570 | |
 
 One user is streaming speed per request; eight users is the combined rate of
 eight simultaneous requests. Structured output and code are drafted well, so
 they decode fastest; prose least. DFlash2 drafts up to 7 tokens ahead for one
-user and 3 under load. Quality on the final release build: TP4 HumanEval
-160/164 and GSM8K 1,282/1,319; PP4 163/164 and 1,284/1,319.
-Neither layout shows a significant change from 1.6.0 (McNemar p ≥ 0.34).
+user and 3 under load. The 1.7.2 column is the figure 1.7.2 published (measured
+on 2026-10-03 with release 1.7.0's engine, which 1.7.2 still matched, as the
+median of ten one-user runs over two boots); each column is its own session,
+not a side-by-side run. One-user prose varies most between runs. Quality on the
+final release build, scored on the answer after the reasoning: TP4 HumanEval
+151/164 and GSM8K 1,286/1,319, against 154/164 and 1,284/1,319 for 1.7.2
+scored the same way; no significant change (paired McNemar p = 0.45 and 0.75).
 Method and exact figures: [Results](docs/results.md).
 
 ## Settings
@@ -158,11 +177,29 @@ in `.env`); details in [Choosing a layout](docs/results.md#choosing-a-layout).
 
 ## Update
 
-- `./start.sh update` pulls the new release and engine and restarts; your `.env` is preserved.
+- `./start.sh update` pulls the new release and engine image and restarts; your `.env` is preserved.
   A checkout that ran the engine natively under an earlier release moves to the
   container on the same `.env` and checkpoints ([details](docs/how-to-use.md#day-to-day)).
 - With Compose: `git pull`, then `docker compose up -d`.
 - Older releases are git tags; their images may be retired.
+
+**Updating to 1.8.0 from 1.7.x:**
+
+- **Size `max_tokens` for the reasoning plus the answer.** GLM-5.3 always
+  reasons; this engine returns the reasoning in `reasoning` and the answer in
+  `content`. A reply that hits the limit while still reasoning has an empty
+  `content`. `enable_thinking: false` has no effect.
+- In `.env`, delete any `VLLM_BRANCH=ampere-glm53` line (that branch is
+  retired), any `IMAGE` or `VLLM_COMMIT` line (to follow this release's image),
+  and an `EXTRA_ARGS` line carrying `max_pixels` and `max_image_tokens` if you
+  added it for `MM_CAP=1` on 1.7.2.
+- Engine switches have new names: rename any old `VLLM_GLM5_*` (or other
+  renamed) line in `.env` or `docker/container.env`; old names are ignored
+  with a warning at startup. Delete a `SPEC_N` line: with DFlash2 the server
+  refuses it. The [CHANGELOG](CHANGELOG.md) lists every renamed and retired
+  setting.
+- Native installs need Docker and the NVIDIA Container Toolkit first; see the
+  [CHANGELOG](CHANGELOG.md) for the `.env` lines to remove.
 
 ---
 

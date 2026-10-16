@@ -17,7 +17,7 @@ done, so running it twice is safe. The same steps one at a time:
 
 ```bash
 ./install.sh       # 1. pull the engine image, pinned by digest
-./download.sh      # 2. fetch the model (~178 GiB) and the drafter (~2.2 GiB) into ./models
+./download.sh      # 2. fetch the model (~178 GiB) and the drafter (~2.2 GiB) into ./models, at the pinned revisions
 ./start.sh         # 3. start the container, wait for /health, print the KV pool size
 ./start.sh smoke   # 4. one chat request and one tool call against the running server
 ./start.sh stop    # stop it; the image, weights and caches stay, so the next start is quick
@@ -32,12 +32,15 @@ started. The download runs in the same image as you, so the checkpoints are
 yours too; an interrupted download resumes on the next run, and a checkpoint
 counts as present only when every file its index names is there.
 
-**The first boot after an install or an update is slower.** FlashInfer 0.7.0
-compiles its kernel modules into an empty cache unless a matching seed is
-available. With the warm-cache seed, rootless measurements of the release
-image show TP4 startup falling from 931 s cold to 561 s seeded, and PP4 from
-551 s to 416 s. Later boots reuse the compiled modules. While that build runs,
-the log can show lines like
+Both checkpoints are pinned to the Hugging Face revisions this release was
+validated with: `TARGET_REVISION` (`5681f7c2dc6436d63f82ab6fb892b4f5062b8304`)
+and `DRAFTER_REVISION` (`bf582e4eacc1810f76656d1811693ff6c6737d2a`), for
+`./start.sh` and Docker Compose alike. Checkpoints you already have are kept.
+
+**The first boot after an install or an update is slower.** The image ships
+no warm-cache seed (seed: no): it starts compile on first boot (cold).
+FlashInfer compiles its kernel modules into `./cache`, and later boots reuse
+them. While that build runs, the log can show lines like
 `No available shared memory broadcast block found in 60 seconds`; they are
 harmless and stop once the build finishes.
 
@@ -62,15 +65,22 @@ curl http://127.0.0.1:8000/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model": "glm-5.3-flash",
        "messages": [{"role": "user", "content": "Write a haiku about PCIe."}],
-       "max_tokens": 400}'
+       "max_tokens": 4096}'
 ```
 
 Any OpenAI-compatible client works with base URL `http://127.0.0.1:8000/v1`
-and model `glm-5.3-flash`. The model's reasoning comes back in the `reasoning`
-field of the message and the answer in `content`. `reasoning_effort` of `low`,
-`high` or `max` sets how much it thinks. Do not send `reasoning_effort: "none"`
-or `"chat_template_kwargs": {"enable_thinking": false}`: the model still thinks,
-and its reasoning then lands inside `content`.
+and model `glm-5.3-flash`. GLM-5.3 always reasons before it answers: its chat
+template has no thinking switch, and thinking off is not supported. The
+reasoning comes back in the message's `reasoning` field (streamed as
+`delta.reasoning`) and the answer in `content`.
+`"chat_template_kwargs": {"enable_thinking": false}` and `thinking: false` are
+ignored, with a warning in the server log. `reasoning_effort` of `low`, `high`
+or `max` sets how much it thinks; do not send `reasoning_effort: "none"`.
+
+**Set `max_tokens` for the reasoning plus the answer.** If the limit is
+reached while the model is still reasoning, `content` is empty and
+`finish_reason` is `length`; a client that reads only `content` then shows an
+empty reply.
 
 ## Serving other machines
 
@@ -131,6 +141,7 @@ Commonly used from `.env.advanced.example`:
 | `CONTAINER_NAME` | `glm53-flash` | the container's name |
 | `READY_TIMEOUT` | `1800` | seconds `./start.sh` waits for `/health` |
 | `EXTRA_ARGS` | unset | appended to the `vllm serve` command line |
+| `VLLM_MAX_MEDIA_REQUEST_DECODE_BYTES` | `715827880` | upper limit on decoded images, video frames and audio per request (about 683 MiB, about 115 frames of 1080p); larger requests get HTTP 400. Set it in `.env` (under Docker Compose, in [`container.env`](../docker/container.env)) |
 | `HF_TOKEN` | unset | a Hugging Face token makes the download faster |
 
 Every setting in both example files is commented out and shows its default;
@@ -181,6 +192,7 @@ chat/tool requests; it does not repeat the boot check.
 | `./start.sh logs` | follow `logs/serve.log` |
 | `./start.sh smoke` | one chat request and one tool call |
 | `./start.sh stop` | stop the server this checkout started |
+| `./start.sh restart` after a crash | `./start.sh` does not restart a crashed server; Docker Compose does, up to 3 times |
 | `./start.sh update` | `git pull`, pull the new engine if the pin moved, restart |
 | `DRY=1 ./start.sh` | print what would be pulled, downloaded and launched, without doing it |
 
@@ -197,6 +209,23 @@ restarts the server. Your `.env` is kept and its explicit values stay in force;
 each release's [CHANGELOG](../CHANGELOG.md) entry names the lines to delete to
 follow its new defaults. With Docker Compose: `git pull`, then
 `docker compose up -d`.
+
+**Updating from 1.7.x to 1.8.0.** Release 1.8.0 moves the engine to a new
+upstream vLLM base; `./start.sh update` pulls its image. Then:
+
+- **Size `max_tokens` for the reasoning plus the answer** in your clients.
+  Clients that send thinking off now get the reasoning in `reasoning` instead
+  of `content` ([Talk to it](#talk-to-it)).
+- In `.env`, delete any `VLLM_BRANCH=ampere-glm53` line: that fork branch is
+  retired. Delete explicit `IMAGE` or `VLLM_COMMIT` lines to follow this
+  release's image.
+- Rename any engine switch set under an old name in `.env` or
+  [`container.env`](../docker/container.env); old names are ignored with a
+  warning at startup ([Engine switches](engine-switches.md#renamed-and-retired-settings)).
+  Delete a `SPEC_N` line: with DFlash2, `serve.sh` refuses it.
+- Delete an `EXTRA_ARGS` line carrying `max_pixels` and `max_image_tokens` if
+  you added it for `MM_CAP=1` on 1.7.2; `MM_CAP=1` now does this itself. To
+  raise the cap, set `MM_MAX_IMAGE_TOKENS`.
 
 **From a native install.** Earlier releases could run the engine natively from
 `venv/`. This release runs it only in the container, and `./start.sh update`
@@ -341,7 +370,7 @@ Two services run in order:
 
 - **`prepare`** makes `./cache` and the model directory (`MODELS_DIR`, default
   `./models`) writable by the serving user, then downloads the two checkpoints
-  as that user (~180 GiB). An interrupted download resumes; complete
+  as that user, at the pinned revisions (~180 GiB). An interrupted download resumes; complete
   checkpoints are skipped without contacting Hugging Face, so later starts go
   straight to the server. Docker creates a missing directory as root; `prepare`
   hands such a directory to the serving user, but never changes the owner of
@@ -355,6 +384,10 @@ Two services run in order:
   `serve.sh` as its entry point. It switches to the serving user before
   `serve.sh` runs, so it never serves as root. It reports healthy once
   `/health` answers (`docker compose ps`).
+- **Restarts.** If the server exits with an error, Compose starts it again, up
+  to 3 times (`restart: on-failure:3`); `docker compose stop` and `down` stop it
+  for good. `./start.sh` does not restart a crashed server: run
+  `./start.sh restart`.
 
 The serving user is the owner of this checkout, so it works for any user with
 no settings; set `HOST_UID` and `HOST_GID` (in the shell or in `.env`) to use
