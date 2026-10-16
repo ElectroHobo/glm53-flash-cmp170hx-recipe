@@ -119,31 +119,34 @@ was validated with.
 Measured 2026-10-16 on 4× CMP 170HX, 74 SMs per card, mainline cmpunlocker
 with P2P, recipe defaults, 262,144-token context, 180 W per card and PCIe x16 links.
 Decode uses the MiaAI-Lab protocol: 400 tokens, temperature 0, requests sent with
-thinking off (GLM-5.3 reasons regardless; reasoning tokens count, as in every
-earlier release); one user is the median of five runs, and two, four and eight
-users the median aggregate rate of three runs, all on one boot.
+thinking off (GLM-5.3 reasons regardless; reasoning tokens count); one user is
+the median of five runs, and two, four and eight users the median aggregate
+rate of three runs, each layout on one boot.
 
-| | Tensor-parallel 4<br>+ [peer-to-peer](docs/how-to-use.md#pcie-peer-to-peer) (default after verification) | 1.7.2 published | vs 1.7.2 published |
-|---|---:|---:|---:|
-| **1 user** · structured | **482.6** | 482.2 | +0.1 % |
-| **1 user** · code | **442.1** | 447.7 | −1.3 % |
-| **1 user** · prose | **232.1** | 210.6 | +10.2 % |
-| **8 users, total** · structured | 943.7 | 948.6 | −0.5 % |
-| **8 users, total** · code | 835.0 | 834.1 | +0.1 % |
-| **8 users, total** · prose | 667.2 | 684.6 | −2.5 % |
-| **Prompt reading** (cold prefill) | 3,161 | 3,197 | −1.1 % |
-| **KV pool** (tokens) | 1,203,765 | 1,199,570 | |
+| | Tensor-parallel 4<br>+ [peer-to-peer](docs/how-to-use.md#pcie-peer-to-peer) (default after verification) | Pipeline-parallel 4<br>+ [peer-to-peer](docs/how-to-use.md#pcie-peer-to-peer) |
+|---|---:|---:|
+| **1 user** · structured | **482.6** | 232.4 |
+| **1 user** · code | **442.1** | 209.9 |
+| **1 user** · prose | **232.1** | 100.1 |
+| **2 users, total** · structured | 606.5 | 343.8 |
+| **2 users, total** · code | 460.3 | 273.4 |
+| **2 users, total** · prose | 314.7 | 195.5 |
+| **4 users, total** · structured | 717.7 | 409.2 |
+| **4 users, total** · code | 618.7 | 382.8 |
+| **4 users, total** · prose | 501.4 | 314.2 |
+| **8 users, total** · structured | **943.7** | 664.1 |
+| **8 users, total** · code | **835.0** | 608.8 |
+| **8 users, total** · prose | **667.2** | 469.2 |
+| **Prompt reading** (cold prefill) | 3,161 | **7,419** |
+| **KV pool** (tokens) | 1,203,765 | **2,088,960** |
 
-One user is streaming speed per request; eight users is the combined rate of
-eight simultaneous requests. Structured output and code are drafted well, so
-they decode fastest; prose least. DFlash2 drafts up to 7 tokens ahead for one
-user and 3 under load. The 1.7.2 column is the figure 1.7.2 published (measured
-on 2026-10-03 with release 1.7.0's engine, which 1.7.2 still matched, as the
-median of ten one-user runs over two boots); each column is its own session,
-not a side-by-side run. One-user prose varies most between runs. Quality on the
-final release build, scored on the answer after the reasoning: TP4 HumanEval
-151/164 and GSM8K 1,286/1,319, against 154/164 and 1,284/1,319 for 1.7.2
-scored the same way; no significant change (paired McNemar p = 0.45 and 0.75).
+All rates are up-to figures in tok/s. One user is streaming speed per request; two, four and
+eight users are the combined rate of that many simultaneous requests.
+Structured output and code are drafted well, so they decode fastest; prose
+least. DFlash2 drafts up to 7 tokens ahead for one user and 3 under load.
+One-user prose varies most between runs. Both layouts were measured on PCIe x16
+links. Quality on the final release build, scored on the answer after the
+reasoning: TP4 HumanEval 151/164 and GSM8K 1,286/1,319.
 Method and exact figures: [Results](docs/results.md).
 
 ## Settings
