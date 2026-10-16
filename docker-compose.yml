@@ -22,7 +22,7 @@
 # docker/container.env (see docs/how-to-use.md). The API is published on
 # 127.0.0.1:8000 only and has no API key.
 
-x-image: &image ${IMAGE:-ghcr.io/morrowmake/vllm-cmp170hx@sha256:0f53d67ea1b2013f6ef20f53a7b6a78c0264188adbc76f5d05f006f1ca79bea4}
+x-image: &image ${IMAGE:-ghcr.io/morrowmake/vllm-cmp170hx@sha256:18a2f26207568128e1d792ce923e86a74e40def1e43e492db83132cab8cdbe14}
 
 services:
   prepare:

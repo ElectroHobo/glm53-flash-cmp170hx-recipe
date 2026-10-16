@@ -143,7 +143,7 @@ load_env_defaults "$SCRIPT_DIR/.env"
 # and that image, pinned by digest (docker-compose.yml runs the same image).
 # The image pin below is the exact image the release acceptance runs.
 RELEASE_VLLM_COMMIT=819146023facb31c04f1f8512e52464835a10d40
-RELEASE_IMAGE=ghcr.io/morrowmake/vllm-cmp170hx@sha256:0f53d67ea1b2013f6ef20f53a7b6a78c0264188adbc76f5d05f006f1ca79bea4
+RELEASE_IMAGE=ghcr.io/morrowmake/vllm-cmp170hx@sha256:18a2f26207568128e1d792ce923e86a74e40def1e43e492db83132cab8cdbe14
 IMAGE="${IMAGE:-$RELEASE_IMAGE}"
 MODELS_DIR="${MODELS_DIR:-$SCRIPT_DIR/models}"
 # Checkpoints, pinned to the Hub revisions this release was validated with.
