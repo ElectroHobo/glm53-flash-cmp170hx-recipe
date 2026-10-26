@@ -29,6 +29,8 @@ patches on making it fast and making it repeatable. It runs only as a container
 image, so the engine and its Python environment stay out of your system.
 P2P is enabled automatically after a startup [content check](docs/how-to-use.md#pcie-peer-to-peer) passes; otherwise the server runs with P2P disabled.
 
+Also on these cards: [DeepSeek-V4.1-Flash on four CMP 170HX](https://github.com/Morrowmake/dsv41-flash-cmp170hx-recipe).
+
 ## Quick start
 
 One command from a fresh clone, after the [one-time host setup](#one-time-host-setup):
